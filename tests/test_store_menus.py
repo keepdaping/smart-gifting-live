@@ -103,7 +103,7 @@ class StoreMenuTests(unittest.TestCase):
         response = self.client.get(f"/buy/menu/{item['id']}")
         csrf = re.search(r'name="csrf_token" value="([^"]+)"', response.get_data(as_text=True)).group(1)
         response = self.client.post(f"/buy/menu/{item['id']}", data={
-            "csrf_token": csrf, "sender_name": "A Person", "recipient_phone": "0770123456",
+            "csrf_token": csrf, "sender_name": "A Person", "sender_phone": "0750111222", "recipient_phone": "0770123456",
             "message": "", "payment_method": "airtel",
         })
         self.assertEqual(response.status_code, 302)

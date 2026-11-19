@@ -81,7 +81,7 @@ class FaceCheckFlowTests(unittest.TestCase):
     def buy(self, face_lock=True):
         url = f"/buy/menu/{self.item['id']}"
         data = {"csrf_token": self.csrf(self.sender, url), "sender_name": "Amina",
-                "recipient_phone": "0770123456", "message": "", "payment_method": "mtn"}
+                "sender_phone": "0750111222", "recipient_phone": "0770123456", "message": "", "payment_method": "mtn"}
         if face_lock:
             data["face_lock"] = "1"
         response = self.sender.post(url, data=data)
