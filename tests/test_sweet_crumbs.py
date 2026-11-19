@@ -136,6 +136,7 @@ class SweetCrumbsTests(unittest.TestCase):
         response = self.client.post(f"/buy/{product['id']}", data={
             "csrf_token": csrf,
             "sender_name": "A Person",
+            "sender_phone": "0750111222",
             "recipient_phone": "0770123456",
             "message": "Enjoy",
             "payment_method": "mtn",

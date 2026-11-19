@@ -21,7 +21,7 @@
     <div class="checkout-heading mb-4">
         <div>
             <h1 class="h2 mb-1">Send this gift</h1>
-            <p class="text-muted mb-0">Add the details and choose your demo payment method.</p>
+            <p class="text-muted mb-0">{% if provider == 'pesapal' %}Add the details, then pay securely with MTN, Airtel or a card.{% else %}Add the details and choose your demo payment method.{% endif %}</p>
             {% if price_notice %}<p class="small text-warning-emphasis mt-2 mb-0">{{ price_notice }}</p>{% endif %}
         </div>
         <div class="checkout-total"><span>Gift value</span><strong>{{ product.monetary_value|ugx }}</strong></div>
@@ -43,6 +43,18 @@
                            required minlength="2" maxlength="60">
                     <div class="form-text">Shown to your friend on the voucher.</div>
                     <div class="invalid-feedback">{{ errors.sender_name or 'Enter your name (2 to 60 characters).' }}</div>
+                </div>
+
+                <div class="mb-4">
+                    <label for="sender_phone" class="form-label">Your mobile number <span class="text-danger">*</span></label>
+                    <div class="input-group input-group-lg has-validation">
+                        <span class="input-group-text">+256</span>
+                        <input type="tel" class="form-control {{ 'is-invalid' if errors.sender_phone }}" id="sender_phone" name="sender_phone"
+                               value="{{ form.sender_phone|replace('+256', '0') if form.sender_phone else '' }}" placeholder="0770 123 456"
+                               inputmode="tel" autocomplete="tel" required>
+                        <div class="invalid-feedback">{{ errors.sender_phone or 'Enter your Ugandan mobile number, e.g. 0770 123 456.' }}</div>
+                    </div>
+                    <div class="form-text">For your payment receipt, and a refund if the gift is never collected.</div>
                 </div>
 
                 <div class="mb-4">
@@ -79,6 +91,10 @@
                         camera checks it is them. If the face check cannot be used, the cashier sends a one-time code to their phone instead.</p>
                 </div>
 
+                {% if provider == 'pesapal' %}
+                <div class="payment-note mb-4"><i class="bi bi-shield-lock" aria-hidden="true"></i><span>Next you'll go to <strong>Pesapal's secure page</strong>
+                    to pay with <strong>MTN Mobile Money, Airtel Money or a card</strong>. Your voucher is created as soon as the payment is confirmed.</span></div>
+                {% else %}
                 <fieldset class="mb-4">
                     <legend class="form-label">Choose a demo payment method</legend>
                     <div class="row g-2">
@@ -96,11 +112,12 @@
                     {{ field_error(errors, 'payment_method') }}
                     <div class="payment-note mt-3"><i class="bi bi-info-circle" aria-hidden="true"></i><span><strong>Demo only.</strong> No real money is charged and no payment prompt is sent.</span></div>
                 </fieldset>
+                {% endif %}
 
-                <button type="submit" class="btn btn-primary btn-lg w-100" id="payBtn" data-loading-text="Processing payment…">
-                    <span class="btn__label"><i class="bi bi-shield-lock-fill me-2" aria-hidden="true"></i>Continue · {{ product.monetary_value|ugx }}</span>
+                <button type="submit" class="btn btn-primary btn-lg w-100" id="payBtn" data-loading-text="{{ 'Opening secure payment…' if provider == 'pesapal' else 'Processing payment…' }}">
+                    <span class="btn__label"><i class="bi bi-shield-lock-fill me-2" aria-hidden="true"></i>{{ 'Pay' if provider == 'pesapal' else 'Continue' }} · {{ product.monetary_value|ugx }}</span>
                 </button>
-                <p class="small text-center text-muted mt-3 mb-0"><i class="bi bi-lock me-1" aria-hidden="true"></i>Your details are used to prepare this demo voucher.</p>
+                <p class="small text-center text-muted mt-3 mb-0"><i class="bi bi-lock me-1" aria-hidden="true"></i>{% if provider == 'pesapal' %}Payments are processed by Pesapal, licensed by the Bank of Uganda.{% else %}Your details are used to prepare this demo voucher.{% endif %}</p>
             </form>
         </div>
 

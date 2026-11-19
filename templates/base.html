@@ -91,8 +91,12 @@
                 <a href="{{ url_for('photo_credits') }}">Photo credits</a>
             </nav>
             <p class="sg-footer__fine">
+                {% if payment_mode == 'pesapal' %}
+                &copy; 2026 Smart Gifting, Uganda. Payments are processed securely by Pesapal.
+                {% else %}
                 &copy; 2026 Smart Gifting, a Makerere University academic project. Store names are used for
                 demonstration only and imply no partnership. Payments are simulated.
+                {% endif %}
             </p>
         </div>
     </footer>

@@ -44,6 +44,7 @@ from markupsafe import Markup, escape
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from catalogue import MERCHANTS, image_url
+from payments.pesapal import PesapalError
 from store_menus import STORE_MENUS
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -65,7 +66,16 @@ app.config.update(
         or bool(os.environ.get("DYNO"))
     ),
     MAX_CONTENT_LENGTH=64 * 1024,  # forms here are tiny; reject anything larger
+    # Payments: "pesapal" takes real Mobile Money / card payments; "demo" simulates them.
+    # Defaults to Pesapal whenever keys are set.
+    PESAPAL_CONSUMER_KEY=os.environ.get("PESAPAL_CONSUMER_KEY", ""),
+    PESAPAL_CONSUMER_SECRET=os.environ.get("PESAPAL_CONSUMER_SECRET", ""),
+    PESAPAL_ENV=os.environ.get("PESAPAL_ENV", "sandbox"),     # "sandbox" or "live"
+    PESAPAL_IPN_ID=os.environ.get("PESAPAL_IPN_ID", ""),       # optional; registered automatically
+    PUBLIC_BASE_URL=os.environ.get("PUBLIC_BASE_URL", "").rstrip("/"),  # e.g. https://smartgifting.ug
 )
+app.config["PAYMENT_PROVIDER"] = os.environ.get(
+    "PAYMENT_PROVIDER", "pesapal" if app.config["PESAPAL_CONSUMER_KEY"] else "demo")
 
 if app.config["SECRET_KEY"] == "dev-only-change-me" and os.environ.get("RENDER"):
     print("WARNING: SECRET_KEY is not set. Set it in your hosting dashboard.")
@@ -224,6 +234,38 @@ def init_db(path=None):
             FOREIGN KEY (merchant_id) REFERENCES merchants (id),
             FOREIGN KEY (menu_item_id) REFERENCES menu_items (id)
         );
+        -- A purchase waiting for payment. The voucher is created only once it is paid.
+        CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reference TEXT UNIQUE NOT NULL,
+            merchant_id INTEGER NOT NULL,
+            product_id INTEGER,
+            menu_item_id INTEGER,
+            item_title TEXT NOT NULL,
+            amount INTEGER NOT NULL CHECK (amount > 0),
+            currency TEXT NOT NULL DEFAULT 'UGX',
+            sender_name TEXT NOT NULL,
+            sender_phone TEXT,
+            recipient_phone TEXT NOT NULL,
+            message TEXT,
+            face_lock INTEGER NOT NULL DEFAULT 0,
+            provider TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'PENDING'
+                CHECK (status IN ('PENDING', 'PAID', 'FAILED')),
+            tracking_id TEXT UNIQUE,
+            payment_method TEXT,
+            confirmation_code TEXT,
+            voucher_code TEXT,
+            created_at TIMESTAMP NOT NULL,
+            paid_at TIMESTAMP,
+            FOREIGN KEY (merchant_id) REFERENCES merchants (id),
+            FOREIGN KEY (product_id) REFERENCES products (id),
+            FOREIGN KEY (menu_item_id) REFERENCES menu_items (id)
+        );
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
     """)
     cur.execute("BEGIN IMMEDIATE")
     # Columns added after the first prototype (older gifting.db files get upgraded).
@@ -244,6 +286,8 @@ def init_db(path=None):
         "pickup_code_hash": "TEXT",
         "pickup_code_expires_at": "TIMESTAMP",
         "pickup_code_attempts": "INTEGER NOT NULL DEFAULT 0",
+        "sender_phone": "TEXT",
+        "order_id": "INTEGER REFERENCES orders(id)",
     })
     _add_missing_columns(cur, "audit_log", {
         "client_key": "TEXT",
@@ -590,9 +634,14 @@ def allow_face_photo_size():
         request.max_content_length = FACE_PHOTO_MAX_BYTES + 64 * 1024
 
 
+# Called by Pesapal's servers, not a browser form. Safe without a CSRF token because
+# the handler only asks Pesapal for the payment status; it trusts nothing in the request.
+CSRF_EXEMPT_ENDPOINTS = {"pesapal_ipn"}
+
+
 @app.before_request
 def verify_csrf():
-    if request.method == "POST":
+    if request.method == "POST" and request.endpoint not in CSRF_EXEMPT_ENDPOINTS:
         expected = session.get("_csrf", "")
         sent = request.form.get("csrf_token", "")
         if not expected or not sent or not secrets.compare_digest(expected, sent):
@@ -612,7 +661,8 @@ def inject_globals():
     def csrf_field():
         return Markup(f'<input type="hidden" name="csrf_token" value="{escape(csrf_token())}">')
 
-    return {"csrf_field": csrf_field, "OUTCOMES": OUTCOMES, "cashier": session.get("cashier")}
+    return {"csrf_field": csrf_field, "OUTCOMES": OUTCOMES, "cashier": session.get("cashier"),
+            "payment_mode": payment_provider()}
 
 
 # --------------------------------------------------------------------------
@@ -1041,15 +1091,21 @@ def _validate_gift_form(form):
         errors["recipient_phone"] = "Enter a valid Ugandan mobile number, e.g. 0770 123 456."
     clean["recipient_phone"] = phone or raw_phone
 
+    raw_sender_phone = form.get("sender_phone", "").strip()
+    sender_phone = normalise_phone(raw_sender_phone)
+    if not sender_phone:
+        errors["sender_phone"] = "Enter your Ugandan mobile number, e.g. 0770 123 456."
+    clean["sender_phone"] = sender_phone or raw_sender_phone
+
     message = form.get("message", "").strip()
     if len(message) > MAX_MESSAGE_LEN:
         errors["message"] = f"Keep your message under {MAX_MESSAGE_LEN} characters."
     clean["message"] = message
 
     method = form.get("payment_method", "")
-    if method not in PAYMENT_METHODS:
+    if payment_provider() == "demo" and method not in PAYMENT_METHODS:
         errors["payment_method"] = "Choose how you want to pay."
-    clean["payment_method"] = method
+    clean["payment_method"] = method if method in PAYMENT_METHODS else ""
     clean["face_lock"] = form.get("face_lock") == "1"
     return clean, errors
 
@@ -1087,76 +1143,256 @@ def _buy(product_id=None, menu_item_id=None):
     if request.method == "POST":
         form, errors = _validate_gift_form(request.form)
         if not errors:
-            if menu_item_id is not None:
-                db.execute("BEGIN IMMEDIATE")
-                product = db.execute("""
-                    SELECT mi.id, mi.merchant_id, mi.name AS title, mi.variant, mi.description,
-                           mi.price_ugx AS monetary_value, m.name AS merchant_name,
-                           m.icon, m.accent, mi.id AS menu_item_id
-                    FROM menu_items mi JOIN merchants m ON m.id=mi.merchant_id
-                    WHERE mi.id=? AND mi.is_active=1
-                """, (menu_item_id,)).fetchone()
-                if not product:
-                    db.rollback()
-                    abort(404)
-            for attempt in range(5):  # retry on the (very unlikely) code collision
-                if menu_item_id is not None and attempt:
-                    db.execute("BEGIN IMMEDIATE")
-                    product = db.execute("""
-                        SELECT mi.id, mi.merchant_id, mi.name AS title, mi.variant, mi.description,
-                               mi.price_ugx AS monetary_value, m.name AS merchant_name,
-                               m.icon, m.accent, mi.id AS menu_item_id
-                        FROM menu_items mi JOIN merchants m ON m.id=mi.merchant_id
-                        WHERE mi.id=? AND mi.is_active=1
-                    """, (menu_item_id,)).fetchone()
-                    if not product:
-                        db.rollback()
-                        abort(404)
-                code = generate_voucher_code()
-                try:
-                    if menu_item_id is not None:
-                        db.execute(
-                            """INSERT INTO vouchers (
-                                   voucher_code, merchant_id, product_id, menu_item_id,
-                                   price_at_purchase, sender_name, recipient_phone, message,
-                                   monetary_value, payment_method, created_at, face_lock
-                               ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                            (code, product["merchant_id"], product["menu_item_id"],
-                             product["monetary_value"], form["sender_name"],
-                             form["recipient_phone"], form["message"],
-                             product["monetary_value"], form["payment_method"], utc_now(),
-                             int(form["face_lock"])),
-                        )
-                    else:
-                        db.execute(
-                            """INSERT INTO vouchers (voucher_code, merchant_id, product_id,
-                                   price_at_purchase, sender_name, recipient_phone, message,
-                                   monetary_value, payment_method, created_at, face_lock)
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                            (code, product["merchant_id"], product["id"],
-                             product["monetary_value"], form["sender_name"],
-                             form["recipient_phone"], form["message"],
-                             product["monetary_value"], form["payment_method"], utc_now(),
-                             int(form["face_lock"])),
-                        )
-                    db.commit()
-                    break
-                except sqlite3.IntegrityError:
-                    db.rollback()
+            order = create_order(db, product, form)
+            if payment_provider() == "demo":
+                code = finalize_order(db, order["reference"], paid=True,
+                                      method=PAYMENT_METHODS[form["payment_method"]])
+                _remember_sent_gift(code)
+                flash("Payment received. Your gift voucher is ready to send.", "success")
+                return redirect(url_for("view_voucher", voucher_code=code))
+            try:
+                pesapal_order = start_pesapal_payment(db, order)
+            except PesapalError as exc:
+                app.logger.error("Pesapal order %s failed: %s", order["reference"], exc)
+                db.execute("UPDATE orders SET status='FAILED' WHERE id=? AND status='PENDING'",
+                           (order["id"],))
+                db.commit()
+                flash("We couldn't open the payment page. Nothing was charged. Please try again.",
+                      "danger")
+                errors = {"payment": True}
             else:
-                abort(500)
-            session["just_purchased"] = code
-            # Remember gifts this browser sent, so the sender cannot register their own face.
-            session["sent_codes"] = (session.get("sent_codes", []) + [code])[-30:]
-            flash("Payment received. Your gift voucher is ready to send.", "success")
-            return redirect(url_for("view_voucher", voucher_code=code))
-        flash("Please fix the highlighted fields and try again.", "danger")
+                session["pending_orders"] = (session.get("pending_orders", [])
+                                             + [order["reference"]])[-10:]
+                return redirect(pesapal_order.redirect_url)
+        else:
+            flash("Please fix the highlighted fields and try again.", "danger")
 
     status = 400 if errors else 200
     return render_template("buy.html", product=product, form=form, errors=errors,
                            payment_methods=PAYMENT_METHODS, max_message=MAX_MESSAGE_LEN,
+                           provider=payment_provider(),
                            price_notice=(SWEET_CRUMBS_PRICE_NOTICE
                                          if product["merchant_name"] == "Sweet Crumbs Bakery" else None)), status
+
+
+# --------------------------------------------------------------------------
+# Orders and payments: a voucher exists only after its order is paid
+# --------------------------------------------------------------------------
+def payment_provider():
+    return app.config["PAYMENT_PROVIDER"]
+
+
+_pesapal = {}
+
+
+def pesapal_client():
+    """One shared client per key set, so the access token is reused between requests."""
+    from payments.pesapal import PesapalClient
+    cfg = app.config
+    key = (cfg["PESAPAL_CONSUMER_KEY"], cfg["PESAPAL_ENV"])
+    client = _pesapal.get(key)
+    if client is None:
+        client = _pesapal[key] = PesapalClient(cfg["PESAPAL_CONSUMER_KEY"],
+                                               cfg["PESAPAL_CONSUMER_SECRET"], cfg["PESAPAL_ENV"])
+    return client
+
+
+def public_url(endpoint, **values):
+    """Absolute URL Pesapal can reach. PUBLIC_BASE_URL wins over the request host."""
+    base = app.config["PUBLIC_BASE_URL"]
+    if base:
+        return base + url_for(endpoint, **values)
+    return url_for(endpoint, _external=True, **values)
+
+
+def pesapal_ipn_id(db):
+    """The IPN id from settings, or register our IPN URL with Pesapal once and store it."""
+    if app.config["PESAPAL_IPN_ID"]:
+        return app.config["PESAPAL_IPN_ID"]
+    ipn_url = public_url("pesapal_ipn")
+    key = f"pesapal_ipn_id:{app.config['PESAPAL_ENV']}:{ipn_url}"
+    row = db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    if row:
+        return row["value"]
+    ipn_id = pesapal_client().register_ipn(ipn_url, "GET")
+    db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, ipn_id))
+    db.commit()
+    return ipn_id
+
+
+def create_order(db, product, form):
+    """Record what is being bought, at today's price, before any payment starts."""
+    for _ in range(5):
+        reference = "SG-" + secrets.token_hex(6).upper()
+        try:
+            cur = db.execute(
+                """INSERT INTO orders (reference, merchant_id, product_id, menu_item_id, item_title,
+                       amount, sender_name, sender_phone, recipient_phone, message, face_lock,
+                       provider, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (reference, product["merchant_id"],
+                 None if product["menu_item_id"] else product["id"], product["menu_item_id"],
+                 product["title"], product["monetary_value"], form["sender_name"],
+                 form["sender_phone"], form["recipient_phone"], form["message"],
+                 int(form["face_lock"]), payment_provider(), utc_now()))
+            db.commit()
+            return db.execute("SELECT * FROM orders WHERE id=?", (cur.lastrowid,)).fetchone()
+        except sqlite3.IntegrityError:
+            db.rollback()
+    abort(500)
+
+
+def start_pesapal_payment(db, order):
+    client = pesapal_client()
+    first, _, last = order["sender_name"].partition(" ")
+    pesapal_order = client.submit_order(
+        reference=order["reference"],
+        amount=order["amount"],
+        description=f"Smart Gifting: {order['item_title']}",
+        callback_url=public_url("payment_return"),
+        ipn_id=pesapal_ipn_id(db),
+        phone=order["sender_phone"].replace("+", ""),
+        first_name=first, last_name=last,
+    )
+    db.execute("UPDATE orders SET tracking_id=? WHERE id=?", (pesapal_order.tracking_id, order["id"]))
+    db.commit()
+    return pesapal_order
+
+
+def finalize_order(db, reference, paid, method=None, confirmation_code=None):
+    """Mark an order paid (creating its voucher) or failed. Safe to call many times.
+
+    Returns the voucher code when the order is paid, otherwise None.
+    """
+    db.execute("BEGIN IMMEDIATE")
+    order = db.execute("SELECT * FROM orders WHERE reference=?", (reference,)).fetchone()
+    if order is None:
+        db.rollback()
+        return None
+    if order["status"] != "PENDING":
+        db.rollback()
+        return order["voucher_code"]
+    if not paid:
+        db.execute("UPDATE orders SET status='FAILED' WHERE id=?", (order["id"],))
+        db.commit()
+        return None
+    for _ in range(5):
+        code = generate_voucher_code()
+        if not db.execute("SELECT 1 FROM vouchers WHERE voucher_code=?", (code,)).fetchone():
+            break
+    else:
+        db.rollback()
+        abort(500)
+    db.execute(
+        """INSERT INTO vouchers (voucher_code, merchant_id, product_id, menu_item_id,
+               price_at_purchase, sender_name, sender_phone, recipient_phone, message,
+               monetary_value, payment_method, created_at, face_lock, order_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (code, order["merchant_id"], order["product_id"], order["menu_item_id"], order["amount"],
+         order["sender_name"], order["sender_phone"], order["recipient_phone"], order["message"],
+         order["amount"], method, utc_now(), order["face_lock"], order["id"]))
+    db.execute("""UPDATE orders SET status='PAID', paid_at=?, payment_method=?,
+                      confirmation_code=?, voucher_code=? WHERE id=?""",
+               (utc_now(), method, confirmation_code, code, order["id"]))
+    db.commit()
+    app.logger.info("Order %s paid; voucher issued", reference)
+    return code
+
+
+def settle_pesapal_order(db, tracking_id):
+    """Ask Pesapal for the real status of a payment and update the order.
+
+    Returns (order_row_or_None, voucher_code_or_None). The order stays PENDING while
+    Pesapal is still waiting for the sender to approve the payment on their phone.
+    """
+    order = db.execute("SELECT * FROM orders WHERE tracking_id=?", (tracking_id,)).fetchone()
+    if order is None:
+        return None, None
+    if order["status"] != "PENDING":
+        return order, order["voucher_code"]
+    status = pesapal_client().transaction_status(tracking_id)
+    if status.merchant_reference and status.merchant_reference != order["reference"]:
+        app.logger.error("Pesapal reference mismatch for %s", tracking_id)
+        return order, None
+    if status.completed:
+        if status.currency.upper() != order["currency"] or round(status.amount) < order["amount"]:
+            app.logger.error("Pesapal amount mismatch for %s: %s %s", order["reference"],
+                             status.amount, status.currency)
+            return order, None
+        code = finalize_order(db, order["reference"], paid=True, method=status.method or "Pesapal",
+                              confirmation_code=status.confirmation_code)
+    elif status.final_failure:
+        code = finalize_order(db, order["reference"], paid=False)
+    else:
+        code = None
+    return db.execute("SELECT * FROM orders WHERE id=?", (order["id"],)).fetchone(), code
+
+
+def _remember_sent_gift(code):
+    session["just_purchased"] = code
+    # Remember gifts this browser sent, so the sender cannot register their own face.
+    session["sent_codes"] = (session.get("sent_codes", []) + [code])[-30:]
+
+
+@app.route("/payment/return")
+def payment_return():
+    """Pesapal sends the sender back here after the payment page."""
+    tracking_id = request.args.get("OrderTrackingId", "").strip()
+    if not tracking_id or payment_provider() != "pesapal":
+        abort(404)
+    db = get_db()
+    try:
+        order, code = settle_pesapal_order(db, tracking_id)
+    except PesapalError as exc:
+        app.logger.error("Pesapal status check failed: %s", exc)
+        order = db.execute("SELECT * FROM orders WHERE tracking_id=?", (tracking_id,)).fetchone()
+        code = order["voucher_code"] if order else None
+    if order is None:
+        abort(404)
+    if code:
+        if order["reference"] in session.get("pending_orders", []):
+            _remember_sent_gift(code)
+            flash("Payment received. Your gift voucher is ready to send.", "success")
+        return redirect(url_for("view_voucher", voucher_code=code))
+    return redirect(url_for("payment_status_page", reference=order["reference"]))
+
+
+@app.route("/payment/<reference>")
+def payment_status_page(reference):
+    """Waiting page while the sender approves the Mobile Money prompt."""
+    db = get_db()
+    order = db.execute("SELECT * FROM orders WHERE reference=?", (reference,)).fetchone()
+    if order is None or order["reference"] not in session.get("pending_orders", []):
+        abort(404)
+    if order["status"] == "PENDING" and order["tracking_id"] and payment_provider() == "pesapal":
+        try:
+            order, _ = settle_pesapal_order(db, order["tracking_id"])
+        except PesapalError as exc:
+            app.logger.error("Pesapal status check failed: %s", exc)
+    if order["status"] == "PAID":
+        _remember_sent_gift(order["voucher_code"])
+        flash("Payment received. Your gift voucher is ready to send.", "success")
+        return redirect(url_for("view_voucher", voucher_code=order["voucher_code"]))
+    return render_template("payment_status.html", order=order)
+
+
+@app.route("/payment/pesapal/ipn", methods=["GET", "POST"])
+def pesapal_ipn():
+    """Pesapal's server tells us a payment changed. We confirm it with Pesapal ourselves."""
+    data = request.args if request.method == "GET" else (request.get_json(silent=True) or request.form)
+    tracking_id = str(data.get("OrderTrackingId", "")).strip()
+    reference = str(data.get("OrderMerchantReference", "")).strip()
+    notification = str(data.get("OrderNotificationType", "IPNCHANGE"))
+    reply = {"orderNotificationType": notification, "orderTrackingId": tracking_id,
+             "orderMerchantReference": reference, "status": 500}
+    if tracking_id and payment_provider() == "pesapal":
+        try:
+            order, _ = settle_pesapal_order(get_db(), tracking_id)
+            if order is not None:
+                reply["status"] = 200
+        except PesapalError as exc:
+            app.logger.error("Pesapal IPN status check failed: %s", exc)
+    return jsonify(reply)
 
 
 def fetch_voucher(db, code):

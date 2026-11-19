@@ -120,7 +120,36 @@ catalogue entries continue to use branded icon tiles unless an image is configur
 ## Deploy (Render)
 
 Build command `pip install -r requirements.txt`, start command from the `Procfile`. Set `SECRET_KEY`
-and `CASHIER_PIN` in the dashboard.
+and `CASHIER_PIN` in the dashboard. See `.env.example` for every setting.
+
+## Real payments (Pesapal)
+
+With Pesapal keys set, the app takes real MTN Mobile Money, Airtel Money and card payments.
+Without them it runs the simulated demo, as before.
+
+How a purchase works:
+
+1. The sender fills in the gift form. The app saves an **order** (status `PENDING`) at today's price.
+   No voucher exists yet.
+2. The sender is sent to Pesapal's secure page, picks MTN, Airtel or card, and approves the prompt
+   on their phone.
+3. Pesapal calls `/payment/pesapal/ipn` and returns the sender to `/payment/return`. Neither call is
+   trusted on its own: the app asks Pesapal for the payment status every time.
+4. When Pesapal says **Completed** for the right amount in UGX, the order becomes `PAID` and exactly one
+   voucher is created, however many times Pesapal notifies us. `FAILED` or `REVERSED` payments create
+   no voucher. While the sender is still approving, they see a waiting page that checks every 5 seconds.
+
+Set up:
+
+1. Get sandbox keys from Pesapal's developer site (demo keys for Uganda) or your merchant dashboard.
+2. In Render, set `PESAPAL_CONSUMER_KEY`, `PESAPAL_CONSUMER_SECRET`, `PESAPAL_ENV=sandbox` and
+   `PUBLIC_BASE_URL` (your https address). Pesapal must be able to reach it, so test on the deployed
+   site, not localhost.
+3. The IPN URL is registered with Pesapal automatically on the first payment.
+4. After Pesapal approves your business (KYC), switch to live keys and `PESAPAL_ENV=live`.
+
+Code: `payments/pesapal.py` (API client, standard library only) and the "Orders and payments" section
+of `app.py`. Tests: `tests/test_payments.py` (runs against a fake Pesapal, no network needed).
 
 ## Face check at pickup
 
