@@ -3834,3 +3834,102 @@ h1, h2, h3, h4, h5,
 @media (prefers-reduced-motion: reduce) {
     .face-cam__arrow--left, .face-cam__arrow--right { animation: none; }
 }
+
+/* ==========================================================================
+   v2 storefront: occasions, payment strip, open-a-gift, FAQ, sellers,
+   WhatsApp help and the recipient's unwrap screen
+   ========================================================================== */
+.hero--v2 { padding-bottom: 2.5rem; }
+.hero--v2 .hero__title { margin-top: .25rem; }
+.occasions {
+    display: flex; flex-wrap: wrap; justify-content: center; align-items: center;
+    gap: .5rem; margin: 1.25rem auto 0; max-width: 760px;
+}
+.occasions__label { font-size: .85rem; color: var(--sg-muted); margin-right: .25rem; }
+.occasion {
+    display: inline-flex; align-items: center; gap: .4rem;
+    border: 1px solid var(--sg-line); background: #fff; color: var(--sg-ink);
+    border-radius: 999px; padding: .45rem .9rem; font-size: .9rem; font-weight: 600;
+    transition: transform .15s var(--sg-ease), border-color .15s, box-shadow .15s;
+}
+.occasion i { color: var(--sg-primary); }
+.occasion:hover, .occasion:focus-visible {
+    border-color: var(--sg-primary); transform: translateY(-1px); box-shadow: var(--sg-shadow);
+}
+.hero__actions { display: flex; flex-wrap: wrap; gap: .75rem; justify-content: center; margin-top: 1.5rem; }
+
+.paystrip { background: var(--sg-green); color: #e8f3ee; font-size: .85rem; }
+.paystrip__inner {
+    display: flex; flex-wrap: wrap; justify-content: center; gap: .5rem 1.75rem; padding: .8rem 0;
+}
+.paystrip i { color: #f2c94c; margin-right: .3rem; }
+
+.claim { padding: 2.5rem 0 1rem; }
+.claim__card {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1.25rem;
+    background: #fff; border: 1px dashed var(--sg-primary); border-radius: var(--sg-radius-lg, 1.25rem);
+    padding: 1.5rem 1.75rem; box-shadow: var(--sg-shadow);
+}
+.claim__form { display: flex; gap: .5rem; flex: 1 1 320px; max-width: 460px; }
+.claim__form input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }
+
+.faq { padding: 3rem 0; }
+.faq__list .accordion-item { border-color: var(--sg-line); }
+.faq__list .accordion-button { font-weight: 600; }
+.faq__list .accordion-button:not(.collapsed) { background: var(--sg-soft); color: var(--sg-ink); box-shadow: none; }
+.faq__list .accordion-button:focus { box-shadow: 0 0 0 .2rem rgb(22 132 91 / 20%); }
+
+.sellers { background: var(--sg-primary); color: #fff; padding: 2.25rem 0; }
+.sellers__inner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; }
+.sellers p { color: rgb(255 255 255 / 85%); }
+
+.wa-help {
+    position: fixed; left: 1rem; bottom: 1rem; z-index: 1030;
+    width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center;
+    background: #25d366; color: #fff; font-size: 1.6rem; box-shadow: 0 8px 24px rgb(0 0 0 / 20%);
+}
+.wa-help:hover { color: #fff; transform: scale(1.05); }
+
+.legal h2 { color: var(--sg-ink); }
+.legal li { margin-bottom: .35rem; }
+
+.unwrap {
+    position: fixed; inset: 0; z-index: 2000; display: grid; place-items: center; padding: 1.5rem;
+    background: radial-gradient(circle at 50% 35%, #1f8a63 0%, #0a3d2e 70%); color: #fff; text-align: center;
+    transition: opacity .45s ease, transform .45s ease;
+}
+.unwrap .sg-label { color: #f2c94c; }
+.unwrap h2 { color: #fff; max-width: 22ch; margin-inline: auto; }
+.unwrap.is-open { opacity: 0; transform: scale(1.08); pointer-events: none; }
+.unwrap__gift {
+    font-size: 5rem; color: #f2c94c; line-height: 1; margin-bottom: 1rem;
+    animation: gift-wiggle 1.6s ease-in-out infinite;
+}
+.unwrap .btn-primary { background: #f2c94c; border-color: #f2c94c; color: #0a3d2e; font-weight: 700; }
+body.is-unwrapping { overflow: hidden; }
+@keyframes gift-wiggle {
+    0%, 70%, 100% { transform: rotate(0); }
+    75% { transform: rotate(-8deg); } 85% { transform: rotate(8deg); } 95% { transform: rotate(-4deg); }
+}
+.confetti {
+    position: fixed; top: -12px; width: 9px; height: 14px; z-index: 2100; border-radius: 2px; pointer-events: none;
+    animation: confetti-fall 2.2s cubic-bezier(.2, .6, .4, 1) forwards;
+}
+@keyframes confetti-fall {
+    to { transform: translate(var(--drift), 105vh) rotate(720deg); opacity: .9; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .unwrap__gift { animation: none; }
+}
+@media (max-width: 575.98px) {
+    .occasions__label { width: 100%; text-align: center; }
+    .claim__card { padding: 1.25rem; }
+    .claim__form { flex-direction: column; max-width: none; }
+    .paystrip__inner { justify-content: flex-start; gap: .4rem 1.25rem; }
+}
+.hero__actions .btn-outline-primary {
+    --bs-btn-color: var(--sg-primary); --bs-btn-border-color: var(--sg-primary);
+    --bs-btn-hover-bg: var(--sg-primary); --bs-btn-hover-border-color: var(--sg-primary); --bs-btn-hover-color: #fff;
+    --bs-btn-active-bg: var(--sg-primary-dark); --bs-btn-active-border-color: var(--sg-primary-dark);
+    background: #fff;
+}

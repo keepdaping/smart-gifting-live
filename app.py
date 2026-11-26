@@ -72,7 +72,9 @@ app.config.update(
     PESAPAL_CONSUMER_SECRET=os.environ.get("PESAPAL_CONSUMER_SECRET", ""),
     PESAPAL_ENV=os.environ.get("PESAPAL_ENV", "sandbox"),     # "sandbox" or "live"
     PESAPAL_IPN_ID=os.environ.get("PESAPAL_IPN_ID", ""),       # optional; registered automatically
-    PUBLIC_BASE_URL=os.environ.get("PUBLIC_BASE_URL", "").rstrip("/"),  # e.g. https://smartgifting.ug
+    PUBLIC_BASE_URL=os.environ.get("PUBLIC_BASE_URL", "").rstrip("/"),
+    # WhatsApp help line, digits only with country code (e.g. 256770123456). Hidden when unset.
+    SUPPORT_WHATSAPP="".join(ch for ch in os.environ.get("SUPPORT_WHATSAPP", "") if ch.isdigit()),  # e.g. https://smartgifting.ug
 )
 app.config["PAYMENT_PROVIDER"] = os.environ.get(
     "PAYMENT_PROVIDER", "pesapal" if app.config["PESAPAL_CONSUMER_KEY"] else "demo")
@@ -662,7 +664,8 @@ def inject_globals():
         return Markup(f'<input type="hidden" name="csrf_token" value="{escape(csrf_token())}">')
 
     return {"csrf_field": csrf_field, "OUTCOMES": OUTCOMES, "cashier": session.get("cashier"),
-            "payment_mode": payment_provider()}
+            "payment_mode": payment_provider(),
+            "support_whatsapp": app.config.get("SUPPORT_WHATSAPP", "")}
 
 
 # --------------------------------------------------------------------------
@@ -741,6 +744,29 @@ def index():
             covers[m["id"]] = m["image_url"]
     return render_template("index.html", merchants=merchants, covers=covers,
                            categories=list(categories.items()))
+
+
+@app.route("/claim")
+def claim_gift():
+    """Recipients who only have the code (e.g. read out over the phone) open their gift here."""
+    raw = request.args.get("code", "")
+    code = normalise_code(raw)
+    if code and fetch_voucher(get_db(), code):
+        return redirect(url_for("view_voucher", voucher_code=code))
+    if raw.strip():
+        flash("We couldn't find a gift with that code. Check it and try again, "
+              "or open the link in the SMS you received.", "warning")
+    return redirect(url_for("index") + "#claim")
+
+
+@app.route("/privacy")
+def privacy_page():
+    return render_template("privacy.html")
+
+
+@app.route("/terms")
+def terms_page():
+    return render_template("terms.html")
 
 
 @app.route("/assets/images/<path:filename>")
@@ -1443,6 +1469,8 @@ def view_voucher(voucher_code):
     link = url_for("view_voucher", voucher_code=code, _external=True)
     return render_template("voucher.html", voucher=voucher, share=build_share(voucher, link),
                            show_share=show_share,
+                           unwrap=(voucher["status"] == "ACTIVE" and not show_share
+                                   and not sent_by_this_browser(code)),
                            face=recipient_face_state(voucher),
                            price_notice=(SWEET_CRUMBS_PRICE_NOTICE
                                          if voucher["merchant_name"] == "Sweet Crumbs Bakery" else None))

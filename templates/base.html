@@ -38,6 +38,9 @@
                            href="{{ url_for('index') }}"><i class="bi bi-shop"></i> Gift marketplace</a>
                     </li>
                     <li class="nav-item">
+                        <a class="sg-link" href="{{ url_for('index') }}#claim"><i class="bi bi-envelope-open-heart"></i> Open a gift</a>
+                    </li>
+                    <li class="nav-item">
                         <a class="sg-link {% if request.endpoint == 'how_ai_works' %}is-active{% endif %}"
                            {% if request.endpoint == 'how_ai_works' %}aria-current="page"{% endif %}
                            href="{{ url_for('how_ai_works') }}"><i class="bi bi-cpu"></i> How the AI works</a>
@@ -77,6 +80,11 @@
         {% block content %}{% endblock %}
     </main>
 
+    {% if support_whatsapp %}
+    <a class="wa-help" href="https://wa.me/{{ support_whatsapp }}?text={{ 'Hello Smart Gifting, I need help with a gift.'|urlencode }}"
+       target="_blank" rel="noopener" aria-label="Chat with us on WhatsApp"><i class="bi bi-whatsapp" aria-hidden="true"></i></a>
+    {% endif %}
+
     {% block gift_finder %}{% include "_finder.html" %}{% endblock %}
 
     <footer class="sg-footer">
@@ -88,6 +96,9 @@
                 <a href="{{ url_for('index') }}">Marketplace</a>
                 <a href="{{ url_for('how_ai_works') }}">How the AI works</a>
                 <a href="{{ url_for('merchant_verify') }}">Cashier portal</a>
+                <a href="{{ url_for('index') }}#help">Help</a>
+                <a href="{{ url_for('terms_page') }}">Terms</a>
+                <a href="{{ url_for('privacy_page') }}">Privacy</a>
                 <a href="{{ url_for('photo_credits') }}">Photo credits</a>
             </nav>
             <p class="sg-footer__fine">

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Privacy{% endblock %}
+{% block content %}
+<section class="container py-5 legal" style="max-width: 760px;">
+    <p class="sg-label">Privacy</p>
+    <h1 class="h2 mb-3">How we use your information</h1>
+    <p class="text-muted">Smart Gifting follows Uganda's Data Protection and Privacy Act, 2019. This page explains, in plain language, what we collect and why.</p>
+
+    <h2 class="h5 mt-4">What we collect</h2>
+    <ul>
+        <li><strong>Sender:</strong> your name and mobile number, for your receipt and for refunds.</li>
+        <li><strong>Recipient:</strong> their mobile number, so we can send them the gift, and the message you write.</li>
+        <li><strong>Payments:</strong> the amount, the payment method and Pesapal's payment reference. Your Mobile Money PIN and card number go to Pesapal only. We never see them.</li>
+        <li><strong>Face check (only if the sender turns it on):</strong> a faceprint, which is a list of numbers made from the recipient's face, not the photo. It is stored only with the recipient's consent and deleted when the gift is collected.</li>
+        <li><strong>Pickups:</strong> a record of each code check at the store (time, store and result), to stop fraud.</li>
+    </ul>
+
+    <h2 class="h5 mt-4">What we do not do</h2>
+    <ul>
+        <li>We do not sell your information or use it for advertising.</li>
+        <li>We do not keep face photos.</li>
+        <li>We share details only with the store that hands over the gift and with Pesapal to process the payment.</li>
+    </ul>
+
+    <h2 class="h5 mt-4">Cookies</h2>
+    <p>We use one cookie to keep you signed in and to protect forms. We do not use tracking or advertising cookies.</p>
+
+    <h2 class="h5 mt-4">Your rights</h2>
+    <p>You can ask to see, correct or delete your information at any time.
+        {% if support_whatsapp %}Message us on <a href="https://wa.me/{{ support_whatsapp }}" target="_blank" rel="noopener">WhatsApp</a>.{% else %}Contact Smart Gifting through the details on this website.{% endif %}</p>
+</section>
+{% endblock %}

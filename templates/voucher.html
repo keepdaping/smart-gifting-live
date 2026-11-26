@@ -4,6 +4,16 @@
 
 {% block content %}
 {% set is_active = voucher.status == 'ACTIVE' %}
+{% if unwrap %}
+<div class="unwrap" id="unwrap" data-code="{{ voucher.voucher_code }}" hidden>
+    <div class="unwrap__box">
+        <div class="unwrap__gift" aria-hidden="true"><i class="bi bi-gift-fill"></i></div>
+        <p class="sg-label mb-1">A gift for you</p>
+        <h2 class="h3 mb-2">{{ voucher.sender_name }} sent you something from {{ voucher.merchant_name }}</h2>
+        <button type="button" class="btn btn-primary btn-lg mt-2">Tap to open</button>
+    </div>
+</div>
+{% endif %}
 <div class="container py-4 py-lg-5 voucher-page" style="max-width: 720px;">
 
     <div class="text-center mb-4">
