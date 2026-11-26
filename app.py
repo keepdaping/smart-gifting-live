@@ -79,8 +79,8 @@ app.config.update(
     # WhatsApp help line, digits only with country code (e.g. 256770123456). Hidden when unset.
     SUPPORT_WHATSAPP="".join(ch for ch in os.environ.get("SUPPORT_WHATSAPP", "") if ch.isdigit()),
     # SMS through Africa's Talking. Username "sandbox" + a sandbox key for testing.
-    AT_USERNAME=os.environ.get("AT_USERNAME", ""),
-    AT_API_KEY=os.environ.get("AT_API_KEY", ""),
+    AT_USERNAME=os.environ.get("AT_USERNAME", "").strip(),
+    AT_API_KEY=os.environ.get("AT_API_KEY", "").strip().strip("\"'"),
     AT_SENDER_ID=os.environ.get("AT_SENDER_ID", ""),   # approved sender name, optional
     # Smart Gifting's cut of each collected gift, used for store payouts.
     STORE_COMMISSION_PERCENT=float(os.environ.get("STORE_COMMISSION_PERCENT", "5")),
