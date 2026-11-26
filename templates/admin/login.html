@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block gift_finder %}{% endblock %}
+{% block title %}Admin{% endblock %}
+{% block content %}
+<div class="container py-5" style="max-width: 420px;">
+    <h1 class="h3 text-center mb-3">Smart Gifting admin</h1>
+    <form method="POST" action="{{ url_for('admin_login') }}" class="panel">
+        {{ csrf_field() }}
+        <label for="password" class="form-label">Admin password</label>
+        <input type="password" id="password" name="password" class="form-control form-control-lg mb-3" required autocomplete="current-password">
+        <button class="btn btn-primary btn-lg w-100">Sign in</button>
+    </form>
+</div>
+{% endblock %}

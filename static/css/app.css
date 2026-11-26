@@ -3933,3 +3933,4 @@ body.is-unwrapping { overflow: hidden; }
     --bs-btn-active-bg: var(--sg-primary-dark); --bs-btn-active-border-color: var(--sg-primary-dark);
     background: #fff;
 }
+.nav-pills { --bs-nav-pills-link-active-bg: var(--sg-primary); --bs-nav-link-color: var(--sg-ink); --bs-nav-link-hover-color: var(--sg-primary); }

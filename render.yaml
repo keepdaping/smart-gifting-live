@@ -4,12 +4,19 @@ services:
     name: smart-gifting
     runtime: python
     plan: free            # free: data resets when the service restarts. Fine for testing only.
+    # Going live: change plan to starter and uncomment the disk, so stores and gifts are kept.
+    # disk:
+    #   name: data
+    #   mountPath: /var/data
+    #   sizeGB: 1
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --workers 1 --threads 4 --timeout 120
     healthCheckPath: /
     envVars:
       - key: SECRET_KEY
         generateValue: true
+      - key: ADMIN_PASSWORD      # long password for /admin, where you add stores and do refunds
+        sync: false
       - key: PESAPAL_ENV
         value: sandbox
       - key: PESAPAL_CONSUMER_KEY
@@ -24,3 +31,4 @@ services:
         sync: false
       - key: SUPPORT_WHATSAPP    # e.g.  256770123456
         sync: false
+      # With the disk above, also add:  GIFT_DB_PATH = /var/data/gifting.db

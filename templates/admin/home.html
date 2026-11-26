@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block gift_finder %}{% endblock %}
+{% block title %}Admin{% endblock %}
+{% block content %}
+<div class="container py-4 py-lg-5">
+    {% include "admin/_nav.html" %}
+    <div class="row g-3 mb-3">
+        {% for label, value in [("Paid gifts", totals.orders), ("Takings (not refunded)", totals.takings|ugx),
+                                ("Waiting to be collected", totals.waiting), ("Collected", totals.collected),
+                                ("Refunded", totals.refunded)] %}
+        <div class="col-6 col-lg"><div class="panel h-100"><p class="small text-muted mb-1">{{ label }}</p><p class="h4 mb-0">{{ value }}</p></div></div>
+        {% endfor %}
+    </div>
+    <p class="small mb-4">
+        Payments: <strong>{{ 'Pesapal (' ~ config.PESAPAL_ENV ~ ')' if payment_mode == 'pesapal' else 'simulated' }}</strong> ·
+        SMS: <strong>{{ 'Africa\'s Talking (' ~ ('sandbox' if config.AT_USERNAME == 'sandbox' else 'live') ~ ')' if sms_mode == 'africastalking' else 'simulated' }}</strong>
+        {% if demo_seeded %} · <span class="text-warning-emphasis">Demo stores are loaded (local only).</span>{% endif %}
+    </p>
+
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <h1 class="h4 mb-0">Partner stores</h1>
+        <a class="btn btn-primary" href="{{ url_for('admin_store_new') }}"><i class="bi bi-plus-lg me-1"></i>Add a store</a>
+    </div>
+    {% if stores %}
+    <div class="table-responsive panel p-0">
+        <table class="table align-middle mb-0">
+            <thead><tr><th>Store</th><th>Gifts on sale</th><th>Own PIN</th><th>Waiting</th><th>Owed to store</th><th></th></tr></thead>
+            <tbody>
+            {% for s in stores %}{% set b = balances[s.id] %}
+            <tr class="{{ '' if s.is_active else 'text-muted' }}">
+                <td><strong>{{ s.name }}</strong><br><span class="small">{{ s.category }}{% if not s.is_active %} · hidden{% endif %}</span></td>
+                <td>{{ s.items }}</td>
+                <td>{% if s.cashier_pin_hash %}<i class="bi bi-check-circle-fill text-success"></i>{% else %}<span class="badge text-bg-warning">Not set</span>{% endif %}</td>
+                <td>{{ b.waiting_n }}</td>
+                <td>{{ b.balance|ugx }}</td>
+                <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin_store', store_id=s.id) }}">Manage</a></td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="panel text-center py-5">
+        <p class="h5">No stores yet</p>
+        <p class="text-muted">Add your first partner store and the gifts it sells. It appears on the site straight away.</p>
+        <a class="btn btn-primary" href="{{ url_for('admin_store_new') }}">Add a store</a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

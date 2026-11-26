@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block gift_finder %}{% endblock %}
+{% block title %}Gifts and refunds · Admin{% endblock %}
+{% block content %}
+<div class="container py-4 py-lg-5">
+    {% include "admin/_nav.html" %}
+    <form class="d-flex gap-2 mb-3" method="GET" style="max-width: 520px;">
+        <input class="form-control" name="q" value="{{ q }}" placeholder="Search code, name, phone or order reference">
+        <button class="btn btn-outline-primary">Search</button>
+    </form>
+    {% if orders %}
+    <div class="table-responsive panel p-0">
+        <table class="table align-middle small mb-0">
+            <thead><tr><th>Paid</th><th>Gift</th><th>From → to</th><th>Amount</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+            {% for o in orders %}
+            <tr>
+                <td>{{ o.paid_at|eat("%d %b, %I:%M %p") }}<br><code>{{ o.voucher_code }}</code></td>
+                <td>{{ o.item_title }}<br><span class="text-muted">{{ o.store_name }}</span></td>
+                <td>{{ o.sender_name }} {{ o.sender_phone|phone if o.sender_phone }}<br>→ {{ o.recipient_phone|phone }}</td>
+                <td>{{ o.amount|ugx }}<br><span class="text-muted">{{ o.payment_method or o.provider }}</span></td>
+                <td>
+                    {% if o.status == 'REFUNDED' %}<span class="badge text-bg-secondary">Refunded</span><div class="text-muted">{{ o.refund_note }}</div>
+                    {% elif o.voucher_status == 'USED' %}<span class="badge text-bg-success">Collected</span>
+                    {% else %}<span class="badge text-bg-warning">Waiting</span>{% endif %}
+                </td>
+                <td class="text-end">
+                    {% if o.status == 'PAID' and o.voucher_status == 'ACTIVE' %}
+                    <form method="POST" action="{{ url_for('admin_refund', reference=o.reference) }}"
+                          onsubmit="return confirm('Refund {{ o.amount|ugx }} to {{ o.sender_name }}? The gift code will stop working.');">
+                        {{ csrf_field() }}
+                        <input type="hidden" name="reason" value="Gift not collected">
+                        <button class="btn btn-sm btn-outline-danger">Refund</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}<p class="text-muted">No paid gifts{{ ' match "' ~ q ~ '"' if q }}.</p>{% endif %}
+    <p class="small text-muted mt-3">Mobile Money payments can only be refunded in full, once. After you click Refund, approve it in the Pesapal dashboard to send the money back.</p>
+</div>
+{% endblock %}

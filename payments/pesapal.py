@@ -170,3 +170,18 @@ class PesapalClient:
             merchant_reference=str(data.get("merchant_reference") or ""),
             confirmation_code=str(data.get("confirmation_code") or ""),
         )
+
+    def refund(self, *, confirmation_code, amount, username, remarks):
+        """Ask Pesapal to refund a COMPLETED payment. Mobile Money can only be refunded in full,
+        and only one refund request is allowed per payment. Pesapal still needs the merchant
+        to approve it in the dashboard before the money moves."""
+        data = self._call("POST", "/api/Transactions/RefundRequest", {
+            "confirmation_code": confirmation_code,
+            "amount": str(amount),
+            "username": username[:50],
+            "remarks": remarks[:200],
+        })
+        code = str(data.get("status") or data.get("error") or "")
+        if code and code != "200":
+            raise PesapalError(f"Pesapal refused the refund: {data.get('message') or code}")
+        return str(data.get("message") or "Refund request received")

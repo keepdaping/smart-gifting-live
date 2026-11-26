@@ -165,6 +165,11 @@
                         <div><dt>Redeemed</dt><dd>{{ result.voucher.redeemed_at|eat if result.voucher.redeemed_at else 'Earlier (time not recorded)' }}</dd></div>
                     </dl>
                 </div>
+                {% elif result.state == 'refunded' %}
+                <div class="verdict verdict--bad" role="alert">
+                    <div class="verdict__head"><i class="bi bi-arrow-counterclockwise"></i> Refunded. Do not hand over the gift.</div>
+                    <p class="mb-0">The sender got their money back, so this code no longer works.</p>
+                </div>
                 {% elif result.state == 'wrong_store' %}
                 <div class="verdict verdict--bad" role="alert">
                     <div class="verdict__head"><i class="bi bi-shop-window"></i> Wrong store. Do not redeem.</div>
