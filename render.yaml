@@ -1,0 +1,26 @@
+# Render Blueprint: New > Blueprint, pick this repo, then fill in the values marked sync: false.
+services:
+  - type: web
+    name: smart-gifting
+    runtime: python
+    plan: free            # free: data resets when the service restarts. Fine for testing only.
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --workers 1 --threads 4 --timeout 120
+    healthCheckPath: /
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: PESAPAL_ENV
+        value: sandbox
+      - key: PESAPAL_CONSUMER_KEY
+        sync: false
+      - key: PESAPAL_CONSUMER_SECRET
+        sync: false
+      - key: AT_USERNAME
+        value: sandbox
+      - key: AT_API_KEY
+        sync: false
+      - key: STORE_PINS          # e.g.  Java House:482913; KFC:771100
+        sync: false
+      - key: SUPPORT_WHATSAPP    # e.g.  256770123456
+        sync: false
