@@ -562,6 +562,9 @@ document.addEventListener("DOMContentLoaded", () => {
     document.querySelectorAll("[data-finder-q]").forEach((chip) => {
         chip.addEventListener("click", () => {
             input.value = chip.dataset.finderQ;
+            if (panel && window.bootstrap && !panel.contains(chip)) {
+                window.bootstrap.Offcanvas.getOrCreateInstance(panel).show();
+            }
             run(input.value);
         });
     });
@@ -868,4 +871,39 @@ document.addEventListener("DOMContentLoaded", () => {
 
         window.addEventListener("pagehide", stop);
     });
+})();
+
+
+/* Recipient's first view of a gift: tap to unwrap, with a burst of confetti. */
+(() => {
+    const cover = document.getElementById("unwrap");
+    if (!cover) return;
+    const key = "sg-unwrapped-" + cover.dataset.code;
+    let seen = false;
+    try { seen = window.localStorage.getItem(key) === "1"; } catch (_e) { /* storage blocked */ }
+    if (seen) { cover.remove(); return; }
+    cover.hidden = false;
+    document.body.classList.add("is-unwrapping");
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const open = () => {
+        try { window.localStorage.setItem(key, "1"); } catch (_e) { /* ignore */ }
+        if (!reduce) {
+            const colours = ["#16845b", "#f2b50f", "#e85d75", "#4aa3df", "#ffffff"];
+            for (let i = 0; i < 80; i += 1) {
+                const bit = document.createElement("span");
+                bit.className = "confetti";
+                bit.style.left = Math.random() * 100 + "vw";
+                bit.style.background = colours[i % colours.length];
+                bit.style.animationDelay = (Math.random() * 0.4) + "s";
+                bit.style.setProperty("--drift", (Math.random() * 160 - 80) + "px");
+                document.body.append(bit);
+                window.setTimeout(() => bit.remove(), 2600);
+            }
+        }
+        cover.classList.add("is-open");
+        document.body.classList.remove("is-unwrapping");
+        window.setTimeout(() => cover.remove(), reduce ? 0 : 500);
+    };
+    cover.querySelector("button").addEventListener("click", open);
+    cover.querySelector("button").focus();
 })();

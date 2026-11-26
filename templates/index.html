@@ -3,13 +3,12 @@
 {% block title %}Send a gift voucher{% endblock %}
 
 {% block content %}
-<section class="hero hero--center">
+<section class="hero hero--center hero--v2">
     <div class="container">
-        <div class="hero__mark" aria-hidden="true"><i class="bi bi-gift"></i></div>
-        <p class="sg-label">Digital gift vouchers for Uganda</p>
+        <p class="sg-label">Digital gifts for Uganda</p>
         <h1 class="hero__title">Send a Gift.<br>Make Their Day.</h1>
-        <p class="hero__lead">Pick a treat from a Kampala store, add a personal message and send it by WhatsApp or SMS.
-            They show the code at the till and collect their gift.</p>
+        <p class="hero__lead">Choose a treat from a store they love, add your message and send it by WhatsApp or SMS in two minutes.
+            They show the code at the till and collect it.</p>
 
         <form class="search mx-auto" role="search" id="searchForm" autocomplete="off" action="{{ url_for('index') }}" method="GET">
             <label for="storeSearch" class="visually-hidden">Search stores and gifts</label>
@@ -21,16 +20,35 @@
             <kbd class="search__kbd d-none d-md-inline" aria-hidden="true">/</kbd>
             <button class="visually-hidden" type="submit">Search</button>
         </form>
-        <div class="hero__trust">
-            <span><i class="bi bi-shield-check" aria-hidden="true"></i> One-time redemption</span>
-            <span><i class="bi bi-phone" aria-hidden="true"></i> Share by WhatsApp or SMS</span>
-            <span><i class="bi bi-shop" aria-hidden="true"></i> Collect in store</span>
+
+        <div class="occasions" role="group" aria-label="Find a gift by occasion">
+            <span class="occasions__label">Shop by occasion:</span>
+            <button type="button" class="occasion" data-finder-q="birthday gift"><i class="bi bi-balloon-heart" aria-hidden="true"></i>Birthday</button>
+            <button type="button" class="occasion" data-finder-q="thank you gift"><i class="bi bi-hand-thumbs-up" aria-hidden="true"></i>Thank you</button>
+            <button type="button" class="occasion" data-finder-q="congratulations graduation gift"><i class="bi bi-mortarboard" aria-hidden="true"></i>Congratulations</button>
+            <button type="button" class="occasion" data-finder-q="romantic gift for my partner"><i class="bi bi-heart" aria-hidden="true"></i>For my love</button>
+            <button type="button" class="occasion" data-finder-q="get well soon"><i class="bi bi-bandaid" aria-hidden="true"></i>Get well</button>
+            <button type="button" class="occasion" data-finder-q="something for a student under 30k"><i class="bi bi-backpack" aria-hidden="true"></i>For a student</button>
+            <button type="button" class="occasion" data-finder-q="christmas gift for family"><i class="bi bi-tree" aria-hidden="true"></i>Christmas</button>
         </div>
 
-        <a href="#storeGrid" class="btn btn-primary btn-lg hero__cta">Browse stores</a>
-        <p class="hero__ai-hint">Not sure what to get? <button type="button" class="btn btn-link p-0 align-baseline" data-bs-toggle="offcanvas" data-bs-target="#giftFinder"><i class="bi bi-stars me-1" aria-hidden="true"></i>Ask the AI gift finder</button></p>
+        <div class="hero__actions">
+            <a href="#storeGrid" class="btn btn-primary btn-lg">Browse stores</a>
+            <button type="button" class="btn btn-outline-primary btn-lg" data-bs-toggle="offcanvas" data-bs-target="#giftFinder">
+                <i class="bi bi-stars me-1" aria-hidden="true"></i>Ask the AI gift finder</button>
+        </div>
     </div>
 </section>
+
+<div class="paystrip" aria-label="Ways to pay and keep gifts safe">
+    <div class="container paystrip__inner">
+        <span><i class="bi bi-phone" aria-hidden="true"></i> MTN Mobile Money</span>
+        <span><i class="bi bi-phone-fill" aria-hidden="true"></i> Airtel Money</span>
+        <span><i class="bi bi-credit-card" aria-hidden="true"></i> Visa &amp; Mastercard, so family abroad can send too</span>
+        <span><i class="bi bi-person-check" aria-hidden="true"></i> Optional face check at pickup</span>
+        <span><i class="bi bi-shield-lock" aria-hidden="true"></i> {% if payment_mode == 'pesapal' %}Payments secured by Pesapal{% else %}Each code works once{% endif %}</span>
+    </div>
+</div>
 
 <div class="filterbar" id="filterbar">
     <div class="container">
@@ -98,13 +116,76 @@
         <div class="section-heading section-heading--center">
             <p class="sg-label">Simple and secure</p>
             <h2 class="h2">How It Works</h2>
-            <p class="text-muted mb-0">Three steps from choosing a gift to collecting it.</p>
+            <p class="text-muted mb-0">From choosing a gift to collecting it.</p>
         </div>
         <ol class="how__steps">
-            <li><span class="how__n">1</span><div><strong>Choose a gift</strong><p>Pick a package from a partner store. The value is fixed, so the recipient knows what they get.</p></div></li>
-            <li><span class="how__n">2</span><div><strong>Send it</strong><p>Pay with Mobile Money, then share the voucher by WhatsApp or SMS with your message.</p></div></li>
-            <li><span class="how__n">3</span><div><strong>Collect in store</strong><p>The cashier checks the code. It works once, at that store only, then it is locked.</p></div></li>
+            <li><span class="how__n">1</span><div><strong>Choose a gift</strong><p>Pick a gift from a partner store. The value is fixed, so they know exactly what they get.</p></div></li>
+            <li><span class="how__n">2</span><div><strong>Pay and send</strong><p>Pay with Mobile Money or card, then send the gift by WhatsApp or SMS with your message.</p></div></li>
+            <li><span class="how__n">3</span><div><strong>They collect it</strong><p>The cashier checks the code, and their face if you chose that. It works once, then it is locked.</p></div></li>
         </ol>
+    </div>
+</section>
+
+<section class="claim" id="claim">
+    <div class="container">
+        <div class="claim__card">
+            <div class="claim__text">
+                <p class="sg-label mb-1">Received a gift?</p>
+                <h2 class="h3 mb-1">Open your gift</h2>
+                <p class="text-muted mb-0">Enter the code from your SMS or WhatsApp message.</p>
+            </div>
+            <form class="claim__form" action="{{ url_for('claim_gift') }}" method="GET" autocomplete="off">
+                <label for="claimCode" class="visually-hidden">Gift code</label>
+                <input id="claimCode" name="code" class="form-control form-control-lg" placeholder="GIFT-XXXX-XXXX"
+                       autocapitalize="characters" spellcheck="false" required maxlength="24">
+                <button class="btn btn-primary btn-lg" type="submit">Open gift</button>
+            </form>
+        </div>
+    </div>
+</section>
+
+<section class="faq" id="help">
+    <div class="container" style="max-width: 820px;">
+        <div class="section-heading section-heading--center">
+            <p class="sg-label">Questions</p>
+            <h2 class="h2">Good to Know</h2>
+        </div>
+        <div class="accordion faq__list" id="faqList">
+            {% set faqs = [
+                ("How does the person collect the gift?", "They open the link in their SMS or WhatsApp message, then show the code to the cashier at that store. The cashier checks it online and hands over the gift. The code works once."),
+                ("Do they need a smartphone?", "No. The code arrives by SMS, so a basic phone is enough. Only the optional face check needs a phone with a camera; without it, the cashier sends a one-time code instead."),
+                ("Is my payment safe?", "You pay on Pesapal's secure page with MTN Mobile Money, Airtel Money or a card. Pesapal is licensed by the Bank of Uganda. We never see your PIN or card number. The gift is only created after the payment is confirmed."),
+                ("What if they never collect it?", "We keep your phone number for this. Contact us and we will refund an uncollected gift."),
+                ("Can I send a gift from outside Uganda?", "Yes. Pay with a Visa or Mastercard and send the gift to any Ugandan phone number."),
+                ("How do I avoid scams?", "Smart Gifting will never ask you for your Mobile Money PIN, and a real gift link always opens on this website. If someone asks you to pay to receive a gift, do not pay."),
+            ] %}
+            {% for q, a in faqs %}
+            <div class="accordion-item">
+                <h3 class="accordion-header">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq{{ loop.index }}"
+                            aria-expanded="false" aria-controls="faq{{ loop.index }}">{{ q }}</button>
+                </h3>
+                <div id="faq{{ loop.index }}" class="accordion-collapse collapse" data-bs-parent="#faqList">
+                    <div class="accordion-body">{{ a }}</div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+
+<section class="sellers">
+    <div class="container sellers__inner">
+        <div>
+            <h2 class="h3 mb-1">Own a shop, café or restaurant?</h2>
+            <p class="mb-0">Get new customers who arrive already paid for. No setup cost: you are paid for every gift collected.</p>
+        </div>
+        {% if support_whatsapp %}
+        <a class="btn btn-light btn-lg" href="https://wa.me/{{ support_whatsapp }}?text={{ 'Hello Smart Gifting, I would like to list my store.'|urlencode }}"
+           target="_blank" rel="noopener"><i class="bi bi-whatsapp me-1" aria-hidden="true"></i>List your store</a>
+        {% else %}
+        <a class="btn btn-light btn-lg" href="{{ url_for('merchant_verify') }}"><i class="bi bi-shop me-1" aria-hidden="true"></i>Store sign-in</a>
+        {% endif %}
     </div>
 </section>
 {% endblock %}

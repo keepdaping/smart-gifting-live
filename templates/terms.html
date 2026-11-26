@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Terms{% endblock %}
+{% block content %}
+<section class="container py-5 legal" style="max-width: 760px;">
+    <p class="sg-label">Terms</p>
+    <h1 class="h2 mb-3">Terms of use</h1>
+    <p class="text-muted">By buying or collecting a gift on Smart Gifting, you agree to these terms.</p>
+
+    <h2 class="h5 mt-4">Gifts</h2>
+    <ul>
+        <li>Each gift is for a fixed item or value at one named store, and its code can be used once.</li>
+        <li>The gift is created only after your payment is confirmed.</li>
+        <li>Anyone holding the code can collect the gift, unless the sender turned on the face check. Keep the code private.</li>
+        <li>Gifts cannot be exchanged for cash.</li>
+    </ul>
+
+    <h2 class="h5 mt-4">Refunds</h2>
+    <p>If a gift has not been collected, the sender can ask for a refund to the number that paid. A gift that has been collected cannot be refunded.</p>
+
+    <h2 class="h5 mt-4">Stores</h2>
+    <p>The store is responsible for the item it hands over. If something is wrong with a gift at the store, contact us and we will help sort it out with the store.</p>
+
+    <h2 class="h5 mt-4">Payments</h2>
+    <p>Payments are processed by Pesapal, which is licensed by the Bank of Uganda. Smart Gifting never asks for your Mobile Money PIN.</p>
+
+    <h2 class="h5 mt-4">Contact</h2>
+    <p>{% if support_whatsapp %}Message us on <a href="https://wa.me/{{ support_whatsapp }}" target="_blank" rel="noopener">WhatsApp</a>.{% else %}Contact Smart Gifting through the details on this website.{% endif %}</p>
+</section>
+{% endblock %}
