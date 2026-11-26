@@ -36,7 +36,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import urlparse, quote
 
 import click
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -1459,9 +1459,12 @@ def notify_gift_paid(db, code):
     item = voucher["product_title"]
     value = ugx_filter(voucher["price_at_purchase"] or voucher["monetary_value"])
     sender = voucher["sender_name"]
+    # SMS gateways refuse links to a private address (e.g. http://127.0.0.1 while testing locally).
+    host = (urlparse(link).hostname or "").lower()
+    local = host in ("localhost", "::1") or host.startswith(("127.", "10.", "192.168.")) or host.endswith(".local")
     send_sms(db, voucher["recipient_phone"],
              f"{sender} sent you a gift: {item} from {voucher['merchant_name']}. "
-             f"Show code {code} at the till. Open: {link}",
+             f"Show code {code} at the till." + ("" if local else f" Open: {link}"),
              "GIFT", voucher_code=code)
     if voucher["sender_phone"]:
         send_sms(db, voucher["sender_phone"],
