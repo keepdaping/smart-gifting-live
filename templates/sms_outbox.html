@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block gift_finder %}{% endblock %}
+{% block title %}Test SMS outbox{% endblock %}
+{% block content %}
+<div class="container py-5" style="max-width: 820px;">
+    <h1 class="h3 mb-1">Test SMS outbox</h1>
+    <p class="text-muted">Texts the app sent or would have sent. SMS mode: <strong>{{ provider }}</strong>.
+        This page only exists on your own computer, never on the hosted site.</p>
+    {% for r in rows %}
+    <div class="panel mb-2">
+        <div class="d-flex justify-content-between small text-muted mb-1">
+            <span>{{ r.kind }} to {{ r.to_phone|phone }}</span>
+            <span>{{ r.status }} · {{ r.created_at|eat }}</span>
+        </div>
+        <div class="sms-bubble">{{ r.body }}</div>
+        {% if r.error %}<p class="small text-danger mb-0 mt-1">{{ r.error }}</p>{% endif %}
+    </div>
+    {% else %}
+    <p class="text-muted">No texts yet. Buy a gift to see one here.</p>
+    {% endfor %}
+</div>
+{% endblock %}

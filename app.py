@@ -38,6 +38,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 import click
+from werkzeug.security import check_password_hash, generate_password_hash
 from flask import (Flask, abort, flash, g, jsonify, redirect, render_template, send_file,
                    request, send_from_directory, session, url_for)
 from markupsafe import Markup, escape
@@ -72,10 +73,23 @@ app.config.update(
     PESAPAL_CONSUMER_SECRET=os.environ.get("PESAPAL_CONSUMER_SECRET", ""),
     PESAPAL_ENV=os.environ.get("PESAPAL_ENV", "sandbox"),     # "sandbox" or "live"
     PESAPAL_IPN_ID=os.environ.get("PESAPAL_IPN_ID", ""),       # optional; registered automatically
-    PUBLIC_BASE_URL=os.environ.get("PUBLIC_BASE_URL", "").rstrip("/"),
+    # Render sets RENDER_EXTERNAL_URL itself, so this usually needs no setting there.
+    PUBLIC_BASE_URL=(os.environ.get("PUBLIC_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL", "")).rstrip("/"),
     # WhatsApp help line, digits only with country code (e.g. 256770123456). Hidden when unset.
-    SUPPORT_WHATSAPP="".join(ch for ch in os.environ.get("SUPPORT_WHATSAPP", "") if ch.isdigit()),  # e.g. https://smartgifting.ug
+    SUPPORT_WHATSAPP="".join(ch for ch in os.environ.get("SUPPORT_WHATSAPP", "") if ch.isdigit()),
+    # SMS through Africa's Talking. Username "sandbox" + a sandbox key for testing.
+    AT_USERNAME=os.environ.get("AT_USERNAME", ""),
+    AT_API_KEY=os.environ.get("AT_API_KEY", ""),
+    AT_SENDER_ID=os.environ.get("AT_SENDER_ID", ""),   # approved sender name, optional
+    # Smart Gifting's cut of each collected gift, used for store payouts.
+    STORE_COMMISSION_PERCENT=float(os.environ.get("STORE_COMMISSION_PERCENT", "5")),
 )
+app.config["PRODUCTION"] = app.config["SESSION_COOKIE_SECURE"]
+app.config["SMS_PROVIDER"] = os.environ.get(
+    "SMS_PROVIDER", "africastalking" if app.config["AT_API_KEY"] else "simulated")
+# The shared demo PIN only works where it is allowed: on by default locally, off when hosted.
+app.config["ALLOW_SHARED_PIN"] = os.environ.get(
+    "ALLOW_SHARED_PIN", "0" if app.config["PRODUCTION"] else "1") == "1"
 app.config["PAYMENT_PROVIDER"] = os.environ.get(
     "PAYMENT_PROVIDER", "pesapal" if app.config["PESAPAL_CONSUMER_KEY"] else "demo")
 
@@ -271,7 +285,36 @@ def init_db(path=None):
     """)
     cur.execute("BEGIN IMMEDIATE")
     # Columns added after the first prototype (older gifting.db files get upgraded).
-    _add_missing_columns(cur, "merchants", {"image_url": "TEXT", "icon": "TEXT", "accent": "TEXT"})
+    _add_missing_columns(cur, "merchants", {"image_url": "TEXT", "icon": "TEXT", "accent": "TEXT",
+                                            "cashier_pin_hash": "TEXT", "payout_phone": "TEXT"})
+    cur.executescript("""
+        CREATE TABLE IF NOT EXISTS sms_outbox (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            to_phone TEXT NOT NULL,
+            body TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            voucher_code TEXT,
+            provider TEXT NOT NULL,
+            status TEXT NOT NULL,
+            provider_id TEXT,
+            error TEXT,
+            created_at TIMESTAMP NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS login_failures (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            merchant_id INTEGER NOT NULL,
+            client_key TEXT NOT NULL,
+            created_at TIMESTAMP NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS payouts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            merchant_id INTEGER NOT NULL REFERENCES merchants(id),
+            amount INTEGER NOT NULL CHECK (amount > 0),
+            reference TEXT,
+            note TEXT,
+            paid_at TIMESTAMP NOT NULL
+        );
+    """)
     _add_missing_columns(cur, "products", {"image_url": "TEXT"})
     _add_missing_columns(cur, "vouchers", {
         "payment_method": "TEXT",
@@ -435,6 +478,35 @@ def bootstrap(path=None):
     from seed_menus import seed_menus
     seed_kfc(path)
     seed_menus(path)
+    apply_store_pins(path, os.environ.get("STORE_PINS", ""))
+
+
+def apply_store_pins(path, spec):
+    """Set store PINs from a setting like  "Java House:482913; KFC:771100"  (for hosts without a shell).
+
+    Only the hash is stored. Unknown stores and PINs that are not 6-12 digits are skipped with a warning.
+    """
+    if not spec.strip():
+        return 0
+    conn = connect(path)
+    done = 0
+    for part in spec.split(";"):
+        name, _, pin = part.rpartition(":")
+        name, pin = name.strip(), pin.strip()
+        if not name or not re.fullmatch(r"\d{6,12}", pin):
+            print(f"STORE_PINS: skipped an entry for {name or '?'} (use Store Name:123456)")
+            continue
+        row = conn.execute("SELECT id, cashier_pin_hash FROM merchants WHERE lower(name)=lower(?)", (name,)).fetchone()
+        if row is None:
+            print(f"STORE_PINS: no store called {name!r}")
+            continue
+        if row["cashier_pin_hash"] and check_password_hash(row["cashier_pin_hash"], pin):
+            continue
+        conn.execute("UPDATE merchants SET cashier_pin_hash=? WHERE id=?", (generate_password_hash(pin), row["id"]))
+        done += 1
+    conn.commit()
+    conn.close()
+    return done
 
 
 def warm_up_recommender(path=None):
@@ -1285,6 +1357,66 @@ def start_pesapal_payment(db, order):
     return pesapal_order
 
 
+# --------------------------------------------------------------------------
+# SMS (Africa's Talking, or simulated into the outbox table)
+# --------------------------------------------------------------------------
+_sms_client = {}
+
+
+def sms_client():
+    from payments.sms import AfricasTalking
+    cfg = app.config
+    key = (cfg["AT_USERNAME"], cfg["AT_API_KEY"], cfg["AT_SENDER_ID"])
+    if key not in _sms_client:
+        _sms_client[key] = AfricasTalking(*key)
+    return _sms_client[key]
+
+
+def send_sms(db, to, body, kind, voucher_code=None, log_body=None):
+    """Send one SMS. Never raises: a failed text must not break a paid order.
+
+    ``log_body`` is what the outbox keeps (e.g. with a one-time code masked).
+    Returns the status: SENT, SIMULATED or FAILED.
+    """
+    from payments.sms import SmsError, SmsResult
+    provider = app.config["SMS_PROVIDER"]
+    if provider == "africastalking":
+        try:
+            result = sms_client().send(to, body)
+        except (SmsError, ValueError) as exc:
+            app.logger.error("SMS (%s) to %s failed: %s", kind, phone_filter(to), exc)
+            result = SmsResult("FAILED", error=str(exc)[:200])
+    else:
+        result = SmsResult("SIMULATED")
+    db.execute(
+        "INSERT INTO sms_outbox (to_phone, body, kind, voucher_code, provider, status, provider_id, error, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (to, log_body if log_body is not None else body, kind, voucher_code, provider,
+         result.status, result.provider_id, result.error, utc_now()))
+    db.commit()
+    return result.status
+
+
+def notify_gift_paid(db, code):
+    """Text the gift to the recipient and a receipt to the sender."""
+    voucher = fetch_voucher(db, code)
+    if voucher is None:
+        return
+    link = public_url("view_voucher", voucher_code=code)
+    item = voucher["product_title"]
+    value = ugx_filter(voucher["price_at_purchase"] or voucher["monetary_value"])
+    sender = voucher["sender_name"]
+    send_sms(db, voucher["recipient_phone"],
+             f"{sender} sent you a gift: {item} from {voucher['merchant_name']}. "
+             f"Show code {code} at the till. Open: {link}",
+             "GIFT", voucher_code=code)
+    if voucher["sender_phone"]:
+        send_sms(db, voucher["sender_phone"],
+                 f"Smart Gifting: payment of {value} received. Your gift ({item}) was sent to "
+                 f"{phone_filter(voucher['recipient_phone'])}. Code {code}.",
+                 "RECEIPT", voucher_code=code)
+
+
 def finalize_order(db, reference, paid, method=None, confirmation_code=None):
     """Mark an order paid (creating its voucher) or failed. Safe to call many times.
 
@@ -1322,6 +1454,7 @@ def finalize_order(db, reference, paid, method=None, confirmation_code=None):
                (utc_now(), method, confirmation_code, code, order["id"]))
     db.commit()
     app.logger.info("Order %s paid; voucher issued", reference)
+    notify_gift_paid(db, code)
     return code
 
 
@@ -1824,22 +1957,143 @@ def merchant_verify():
                                          if cashier["name"] == "Sweet Crumbs Bakery" else None))
 
 
+LOGIN_MAX_FAILURES = 5
+LOGIN_WINDOW_MINUTES = 15
+
+
+def _login_blocked(db, merchant_id, client_key):
+    since = (datetime.now(timezone.utc) - timedelta(minutes=LOGIN_WINDOW_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+    return db.execute(
+        "SELECT COUNT(*) FROM login_failures WHERE merchant_id=? AND client_key=? AND created_at>=?",
+        (merchant_id, client_key, since)).fetchone()[0] >= LOGIN_MAX_FAILURES
+
+
+def check_store_pin(merchant, pin):
+    """Each store's own PIN; the shared demo PIN only for stores without one, where allowed."""
+    if merchant["cashier_pin_hash"]:
+        return check_password_hash(merchant["cashier_pin_hash"], pin)
+    if app.config["ALLOW_SHARED_PIN"]:
+        return secrets.compare_digest(pin.encode(), app.config["CASHIER_PIN"].encode())
+    return False
+
+
 @app.route("/merchant/login", methods=["POST"])
 def merchant_login():
     db = get_db()
+    prefill = request.form.get("prefill", "")
     try:
         merchant_id = int(request.form.get("merchant_id", ""))
     except ValueError:
         merchant_id = 0
-    merchant = db.execute("SELECT id, name FROM merchants WHERE id = ?", (merchant_id,)).fetchone()
-    pin = request.form.get("pin", "")
-    pin_ok = secrets.compare_digest(pin.encode(), app.config["CASHIER_PIN"].encode())
-    if not merchant or not pin_ok:
+    merchant = db.execute("SELECT id, name, cashier_pin_hash FROM merchants WHERE id = ?",
+                          (merchant_id,)).fetchone()
+    client_key = client_rate_limit_key()
+    if merchant and _login_blocked(db, merchant["id"], client_key):
+        flash(f"Too many wrong PINs. Wait {LOGIN_WINDOW_MINUTES} minutes and try again.", "danger")
+        return redirect(url_for("merchant_verify", prefill=prefill))
+    if merchant and not merchant["cashier_pin_hash"] and not app.config["ALLOW_SHARED_PIN"]:
+        flash("This store has no PIN yet. Ask Smart Gifting to set one up.", "warning")
+        return redirect(url_for("merchant_verify", prefill=prefill))
+    if not merchant or not check_store_pin(merchant, request.form.get("pin", "")):
+        if merchant:
+            db.execute("INSERT INTO login_failures (merchant_id, client_key, created_at) VALUES (?, ?, ?)",
+                       (merchant["id"], client_key, utc_now()))
+            db.commit()
         flash("Store or PIN is incorrect. Check both and try again.", "danger")
-        return redirect(url_for("merchant_verify", prefill=request.form.get("prefill", "")))
+        return redirect(url_for("merchant_verify", prefill=prefill))
+    db.execute("DELETE FROM login_failures WHERE merchant_id=? AND client_key=?", (merchant["id"], client_key))
+    db.commit()
     session["cashier"] = {"merchant_id": merchant["id"], "name": merchant["name"]}
     flash(f"Signed in to {merchant['name']}.", "success")
-    return redirect(url_for("merchant_verify", prefill=request.form.get("prefill", "")))
+    return redirect(url_for("merchant_verify", prefill=prefill))
+
+
+def store_sales(db, merchant_id):
+    """Totals and recent gifts for one store, plus what Smart Gifting owes it."""
+    rate = app.config["STORE_COMMISSION_PERCENT"] / 100
+    value = "COALESCE(price_at_purchase, monetary_value)"
+    sold = db.execute(f"SELECT COUNT(*) n, COALESCE(SUM({value}),0) v FROM vouchers WHERE merchant_id=?",
+                      (merchant_id,)).fetchone()
+    used = db.execute(f"SELECT COUNT(*) n, COALESCE(SUM({value}),0) v FROM vouchers "
+                      "WHERE merchant_id=? AND status='USED'", (merchant_id,)).fetchone()
+    paid_out = db.execute("SELECT COALESCE(SUM(amount),0) FROM payouts WHERE merchant_id=?",
+                          (merchant_id,)).fetchone()[0]
+    earned = round(used["v"] * (1 - rate))
+    return {
+        "sold_n": sold["n"], "sold_value": sold["v"],
+        "collected_n": used["n"], "collected_value": used["v"],
+        "waiting_n": sold["n"] - used["n"], "waiting_value": sold["v"] - used["v"],
+        "commission_percent": app.config["STORE_COMMISSION_PERCENT"],
+        "earned": earned, "paid_out": paid_out, "balance": earned - paid_out,
+        "gifts": db.execute(f"""
+            SELECT v.voucher_code, v.status, v.created_at, v.redeemed_at,
+                   COALESCE(v.price_at_purchase, v.monetary_value) AS value,
+                   COALESCE(mi.name, p.title) AS item
+            FROM vouchers v LEFT JOIN menu_items mi ON mi.id=v.menu_item_id
+            LEFT JOIN products p ON p.id=v.product_id
+            WHERE v.merchant_id=? ORDER BY v.id DESC LIMIT 50""", (merchant_id,)).fetchall(),
+        "payouts": db.execute("SELECT * FROM payouts WHERE merchant_id=? ORDER BY id DESC LIMIT 20",
+                              (merchant_id,)).fetchall(),
+    }
+
+
+@app.route("/merchant/sales")
+def merchant_sales():
+    db = get_db()
+    cashier = authenticated_cashier(db)
+    if not cashier:
+        return redirect(url_for("merchant_verify"))
+    return render_template("sales.html", sales=store_sales(db, cashier["merchant_id"]))
+
+
+def _find_store(db, name):
+    store = db.execute("SELECT id, name FROM merchants WHERE lower(name)=lower(?)", (name,)).fetchone()
+    if store is None:
+        names = ", ".join(r["name"] for r in db.execute("SELECT name FROM merchants ORDER BY name"))
+        raise click.ClickException(f"No store called {name!r}. Stores: {names}")
+    return store
+
+
+@app.cli.command("set-store-pin")
+@click.argument("store")
+@click.option("--pin", prompt=True, hide_input=True, confirmation_prompt=True,
+              help="At least 6 digits. You will be asked for it if you leave this out.")
+def set_store_pin_command(store, pin):
+    """Give a store its own cashier PIN, e.g.  flask --app app set-store-pin "Java House" """
+    if not re.fullmatch(r"\d{6,12}", pin or ""):
+        raise click.ClickException("The PIN must be 6 to 12 digits.")
+    db = get_db()
+    row = _find_store(db, store)
+    db.execute("UPDATE merchants SET cashier_pin_hash=? WHERE id=?", (generate_password_hash(pin), row["id"]))
+    db.commit()
+    click.echo(f"PIN set for {row['name']}. The shared demo PIN no longer works for this store.")
+
+
+@app.cli.command("record-payout")
+@click.argument("store")
+@click.argument("amount", type=int)
+@click.option("--reference", default="", help="Mobile Money or bank transaction ID")
+@click.option("--note", default="")
+def record_payout_command(store, amount, reference, note):
+    """Record money paid to a store, e.g.  flask --app app record-payout "Java House" 95000 --reference MP123"""
+    if amount <= 0:
+        raise click.ClickException("Amount must be more than 0.")
+    db = get_db()
+    row = _find_store(db, store)
+    db.execute("INSERT INTO payouts (merchant_id, amount, reference, note, paid_at) VALUES (?, ?, ?, ?, ?)",
+               (row["id"], amount, reference, note, utc_now()))
+    db.commit()
+    balance = store_sales(db, row["id"])["balance"]
+    click.echo(f"Recorded UGX {amount:,} to {row['name']}. Still owed: UGX {balance:,}.")
+
+
+@app.route("/dev/sms")
+def sms_outbox():
+    """Read simulated texts while testing. Never available on the hosted site."""
+    if app.config["PRODUCTION"]:
+        abort(404)
+    rows = get_db().execute("SELECT * FROM sms_outbox ORDER BY id DESC LIMIT 50").fetchall()
+    return render_template("sms_outbox.html", rows=rows, provider=app.config["SMS_PROVIDER"])
 
 
 @app.route("/merchant/logout", methods=["POST"])
@@ -2036,8 +2290,19 @@ def merchant_send_pickup_code():
                "WHERE voucher_code = ?", (_hash_pickup_code(code, pickup_code), expires, code))
     log_event(db, code, cashier["merchant_id"], "CODE_SENT", client_key=client_rate_limit_key(),
               menu_item_id=voucher["menu_item_id"], cashier=cashier["name"], verify_method="code")
-    flash(f"Demo SMS to {phone_filter(voucher['recipient_phone'])}: your Smart Gifting pickup code is "
-          f"{pickup_code}. (Simulated: in the real app only the recipient's phone sees this.)", "info")
+    status = send_sms(db, voucher["recipient_phone"],
+                      f"Smart Gifting: your pickup code for {voucher['merchant_name']} is {pickup_code}. "
+                      f"Give it to the cashier only at the till. It expires in {PICKUP_CODE_MINUTES} minutes.",
+                      "PICKUP_CODE", voucher_code=code,
+                      log_body=f"Pickup code ****** for {voucher['merchant_name']} (code hidden)")
+    phone = phone_filter(voucher["recipient_phone"])
+    if status == "SENT":
+        flash(f"Pickup code sent by SMS to {phone}. Ask the customer to read it out.", "info")
+    elif status == "SIMULATED":
+        flash(f"Test SMS to {phone}: your pickup code is {pickup_code}. "
+              "(SMS is simulated: with Africa's Talking set up, only the recipient's phone sees this.)", "info")
+    else:
+        flash(f"The SMS to {phone} could not be sent. Try again, or check the SMS settings.", "danger")
     return redirect(url_for("merchant_verify", code=code))
 
 

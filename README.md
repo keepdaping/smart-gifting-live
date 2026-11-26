@@ -119,8 +119,41 @@ catalogue entries continue to use branded icon tiles unless an image is configur
 
 ## Deploy (Render)
 
-Build command `pip install -r requirements.txt`, start command from the `Procfile`. Set `SECRET_KEY`
-and `CASHIER_PIN` in the dashboard. See `.env.example` for every setting.
+The repo includes `render.yaml`. On Render choose **New > Blueprint**, pick this repo, and fill in:
+
+| Setting | Value |
+|---|---|
+| `PESAPAL_CONSUMER_KEY`, `PESAPAL_CONSUMER_SECRET` | Pesapal **sandbox** keys for Uganda (developer.pesapal.com) |
+| `AT_API_KEY` | Africa's Talking **sandbox** API key (username stays `sandbox`) |
+| `STORE_PINS` | One PIN per store, e.g. `Java House:482913; KFC:771100` |
+| `SUPPORT_WHATSAPP` | Your WhatsApp number, e.g. `256770123456` |
+
+`SECRET_KEY` is generated for you and the public address is detected automatically. On the free plan
+the database resets whenever the service restarts, so use it for testing only.
+
+## Store PINs, sales and payouts
+
+- Each store signs in with **its own PIN**. Set it locally with
+  `python -m flask --app app set-store-pin "Java House"`, or on the host with `STORE_PINS`.
+- The shared `CASHIER_PIN` only works on your own computer, for stores that have no PIN yet.
+  On the hosted site it is switched off (`ALLOW_SHARED_PIN=1` turns it back on).
+- Five wrong PINs lock that store's sign-in for 15 minutes on that device.
+- **Sales & payouts** (button in the cashier portal) shows gifts sold, collected and waiting, and
+  what Smart Gifting owes the store: collected value less `STORE_COMMISSION_PERCENT` (default 5%),
+  minus payouts. Record a payout with
+  `python -m flask --app app record-payout "Java House" 95000 --reference MP123`.
+
+## SMS (Africa's Talking)
+
+When a payment is confirmed the recipient gets the gift code and link by SMS, and the sender gets a
+receipt. The one-time pickup code at the till also goes by SMS, and only the recipient sees it.
+
+- No `AT_API_KEY`: texts are **simulated**. Read them at `/dev/sms` on your own computer
+  (that page never exists on the hosted site).
+- `AT_USERNAME=sandbox` with a sandbox key: texts appear in Africa's Talking's online simulator.
+- Your live username and key: texts reach real phones (paid per SMS).
+
+A failed text never cancels a paid gift. It is recorded as `FAILED` in the `sms_outbox` table.
 
 ## Real payments (Pesapal)
 

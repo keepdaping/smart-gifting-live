@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block gift_finder %}{% endblock %}
+{% block title %}Sales and payouts{% endblock %}
+{% block content %}
+<div class="container py-4 py-lg-5">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+        <div>
+            <h1 class="h2 mb-1">Sales and payouts</h1>
+            <p class="text-muted mb-0"><strong class="text-dark">{{ cashier.name }}</strong></p>
+        </div>
+        <a class="btn btn-outline-dark" href="{{ url_for('merchant_verify') }}"><i class="bi bi-arrow-left me-1" aria-hidden="true"></i>Back to till</a>
+    </div>
+
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-lg-3"><div class="panel h-100"><p class="small text-muted mb-1">Gifts sold</p>
+            <p class="h4 mb-0">{{ sales.sold_n }}</p><p class="small mb-0">{{ sales.sold_value|ugx }}</p></div></div>
+        <div class="col-6 col-lg-3"><div class="panel h-100"><p class="small text-muted mb-1">Collected</p>
+            <p class="h4 mb-0">{{ sales.collected_n }}</p><p class="small mb-0">{{ sales.collected_value|ugx }}</p></div></div>
+        <div class="col-6 col-lg-3"><div class="panel h-100"><p class="small text-muted mb-1">Waiting to be collected</p>
+            <p class="h4 mb-0">{{ sales.waiting_n }}</p><p class="small mb-0">{{ sales.waiting_value|ugx }}</p></div></div>
+        <div class="col-6 col-lg-3"><div class="panel h-100 border-success"><p class="small text-muted mb-1">Smart Gifting owes you</p>
+            <p class="h4 mb-0 text-success">{{ sales.balance|ugx }}</p>
+            <p class="small mb-0">Earned {{ sales.earned|ugx }}, paid {{ sales.paid_out|ugx }}</p></div></div>
+    </div>
+    <p class="small text-muted mb-4">You earn the value of every gift you hand over, less Smart Gifting's {{ '%g'|format(sales.commission_percent) }}% fee.
+        Gifts not yet collected are not owed until they are collected.</p>
+
+    <div class="row g-4">
+        <div class="col-lg-8">
+            <h2 class="h5">Recent gifts</h2>
+            {% if sales.gifts %}
+            <div class="table-responsive panel p-0">
+                <table class="table align-middle small mb-0">
+                    <thead><tr><th>Gift</th><th>Value</th><th>Status</th><th>Bought</th></tr></thead>
+                    <tbody>
+                    {% for g in sales.gifts %}
+                    <tr>
+                        <td>{{ g.item }}<br><code class="small">{{ g.voucher_code[:9] }}…</code></td>
+                        <td>{{ g.value|ugx }}</td>
+                        <td>{% if g.status == 'USED' %}<span class="badge text-bg-success">Collected</span>{% else %}<span class="badge text-bg-warning">Waiting</span>{% endif %}</td>
+                        <td>{{ g.created_at|eat("%d %b, %I:%M %p") if g.created_at else '' }}</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}<p class="text-muted">No gifts sold yet.</p>{% endif %}
+        </div>
+        <div class="col-lg-4">
+            <h2 class="h5">Payouts received</h2>
+            {% if sales.payouts %}
+            <ul class="list-group">
+                {% for p in sales.payouts %}
+                <li class="list-group-item d-flex justify-content-between">
+                    <span>{{ p.paid_at|eat("%d %b %Y") }}{% if p.reference %}<br><span class="small text-muted">Ref {{ p.reference }}</span>{% endif %}</span>
+                    <strong>{{ p.amount|ugx }}</strong>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}<p class="text-muted">No payouts yet.</p>{% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -25,13 +25,13 @@
             <div class="invalid-feedback">Choose the store you are working at.</div>
         </div>
         <div class="mb-4">
-            <label for="pin" class="form-label">Cashier PIN</label>
+            <label for="pin" class="form-label">Store PIN</label>
             <input type="password" class="form-control form-control-lg cashier-pin" id="pin" name="pin" inputmode="numeric"
                    autocomplete="current-password" required minlength="4" maxlength="12" placeholder="••••">
-            <div class="invalid-feedback">Enter your cashier PIN.</div>
+            <div class="invalid-feedback">Enter your store PIN.</div>
         </div>
         <button type="submit" class="btn btn-primary btn-lg w-100"><i class="bi bi-box-arrow-in-right me-2" aria-hidden="true"></i>Sign in securely</button>
-        <p class="small text-muted text-center mt-3 mb-0"><i class="bi bi-info-circle me-1" aria-hidden="true"></i>Demo portal uses the configured shared cashier PIN.</p>
+        <p class="small text-muted text-center mt-3 mb-0"><i class="bi bi-info-circle me-1" aria-hidden="true"></i>Each store has its own PIN. Forgot it? Contact Smart Gifting.</p>
     </form>
     {% if prefill %}
     <p class="text-center small text-muted mt-3">After signing in, code <code>{{ prefill }}</code> will be ready to check.</p>
@@ -47,8 +47,9 @@
             <p class="text-muted mb-0">Signed in at <strong class="text-dark">{{ cashier.name }}</strong></p>
             {% if price_notice %}<p class="small text-warning-emphasis mt-2 mb-0">{{ price_notice }}</p>{% endif %}
         </div>
-        <form method="POST" action="{{ url_for('merchant_logout') }}">
+        <form method="POST" action="{{ url_for('merchant_logout') }}" class="d-flex gap-2">
             {{ csrf_field() }}
+            <a class="btn btn-primary" href="{{ url_for('merchant_sales') }}"><i class="bi bi-graph-up me-1" aria-hidden="true"></i>Sales &amp; payouts</a>
             <button type="submit" class="btn btn-outline-dark"><i class="bi bi-box-arrow-right me-1" aria-hidden="true"></i>Sign out</button>
         </form>
     </div>
