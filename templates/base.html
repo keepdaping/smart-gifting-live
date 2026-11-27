@@ -104,9 +104,11 @@
             <p class="sg-footer__fine">
                 {% if payment_mode == 'pesapal' %}
                 &copy; 2026 Smart Gifting, Uganda. Payments are processed securely by Pesapal.
-                {% else %}
+                {% elif config.SEED_DEMO_STORES %}
                 &copy; 2026 Smart Gifting, a Makerere University academic project. Store names are used for
                 demonstration only and imply no partnership. Payments are simulated.
+                {% else %}
+                &copy; 2026 Smart Gifting, Uganda. Payments are in test mode: no real money is charged.
                 {% endif %}
             </p>
         </div>

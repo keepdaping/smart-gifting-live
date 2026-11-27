@@ -84,9 +84,23 @@ class SmsTests(Base):
         self.assertEqual([r["kind"] for r in rows], ["GIFT", "RECEIPT"])
         self.assertEqual(rows[0]["to_phone"], "+256770123456")
         self.assertIn(code, rows[0]["body"])
-        self.assertIn(f"/voucher/{code}", rows[0]["body"])
+        self.assertIn("Show code", rows[0]["body"])
         self.assertEqual(rows[1]["to_phone"], "+256750111222")
         self.assertTrue(all(r["status"] == "SIMULATED" for r in rows))
+
+    def test_gift_text_has_link_only_for_a_public_address(self):
+        old = app.config["PUBLIC_BASE_URL"]
+        try:
+            app.config["PUBLIC_BASE_URL"] = "https://smartgifting.onrender.com"
+            code, _ = self.buy()
+            body = self.db().execute("SELECT body FROM sms_outbox WHERE kind='GIFT'").fetchone()[0]
+            self.assertIn(f"https://smartgifting.onrender.com/voucher/{code}", body)
+            app.config["PUBLIC_BASE_URL"] = "http://127.0.0.1:5000"
+            self.buy()
+            body = self.db().execute("SELECT body FROM sms_outbox WHERE kind='GIFT' ORDER BY id DESC").fetchone()[0]
+            self.assertNotIn("http", body)
+        finally:
+            app.config["PUBLIC_BASE_URL"] = old
 
     def test_real_provider_used_when_configured(self):
         fake = FakeSms()

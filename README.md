@@ -131,6 +131,22 @@ The repo includes `render.yaml`. On Render choose **New > Blueprint**, pick this
 `SECRET_KEY` is generated for you and the public address is detected automatically. On the free plan
 the database resets whenever the service restarts, so use it for testing only.
 
+## Admin panel (real stores)
+
+Open `/admin` and sign in with `ADMIN_PASSWORD` (on your own computer the password is `admin` unless you set one).
+
+- **Stores:** add a partner store with its photo, location, Mobile Money number for payouts and its own
+  cashier PIN. Untick "Show this store on the site" to hide it.
+- **Gifts:** add what each store sells, with price, option (e.g. 1 kg), photo and words for the AI finder.
+  Photos are resized and kept in the database. Changing a price never changes gifts already bought.
+- **Gifts & refunds:** search paid gifts and refund one that has not been collected. The code stops
+  working at once. With Pesapal the refund is requested through their API; approve it in the Pesapal
+  dashboard. Mobile Money can only be refunded in full, once.
+- **Payouts:** each store page shows what you owe after your fee; record each Mobile Money payout there.
+
+**Live mode:** the demo stores (KFC, Java House and others, used without any agreement) load only on your
+own computer. The hosted site starts with no stores, so only real partners you add are on sale.
+
 ## Store PINs, sales and payouts
 
 - Each store signs in with **its own PIN**. Set it locally with

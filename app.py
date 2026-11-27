@@ -32,10 +32,11 @@ import os
 import re
 import secrets
 import sqlite3
+import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import urlparse, quote
 
 import click
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -78,13 +79,20 @@ app.config.update(
     # WhatsApp help line, digits only with country code (e.g. 256770123456). Hidden when unset.
     SUPPORT_WHATSAPP="".join(ch for ch in os.environ.get("SUPPORT_WHATSAPP", "") if ch.isdigit()),
     # SMS through Africa's Talking. Username "sandbox" + a sandbox key for testing.
-    AT_USERNAME=os.environ.get("AT_USERNAME", ""),
-    AT_API_KEY=os.environ.get("AT_API_KEY", ""),
+    AT_USERNAME=os.environ.get("AT_USERNAME", "").strip(),
+    AT_API_KEY=os.environ.get("AT_API_KEY", "").strip().strip("\"'"),
     AT_SENDER_ID=os.environ.get("AT_SENDER_ID", ""),   # approved sender name, optional
     # Smart Gifting's cut of each collected gift, used for store payouts.
     STORE_COMMISSION_PERCENT=float(os.environ.get("STORE_COMMISSION_PERCENT", "5")),
 )
 app.config["PRODUCTION"] = app.config["SESSION_COOKIE_SECURE"]
+# Demo stores (KFC, Java House...) are only seeded locally. The live site starts empty and
+# real partner stores are added in the admin panel.
+app.config["SEED_DEMO_STORES"] = os.environ.get(
+    "SEED_DEMO_STORES", "0" if app.config["PRODUCTION"] else "1") == "1"
+# Admin panel password. Required on the hosted site; "admin" on your own computer if unset.
+app.config["ADMIN_PASSWORD"] = os.environ.get(
+    "ADMIN_PASSWORD", "" if app.config["PRODUCTION"] else "admin")
 app.config["SMS_PROVIDER"] = os.environ.get(
     "SMS_PROVIDER", "africastalking" if app.config["AT_API_KEY"] else "simulated")
 # The shared demo PIN only works where it is allowed: on by default locally, off when hosted.
@@ -103,6 +111,8 @@ MAX_FAILED_LOOKUPS = 8      # per client and store, per window
 LOOKUP_WINDOW_MINUTES = 5
 # Face check at pickup
 FACE_PHOTO_MAX_BYTES = 1024 * 1024   # camera photos are resized in the browser to ~60-120 KB
+ADMIN_PHOTO_MAX_BYTES = 8 * 1024 * 1024  # phone photos; resized to ~1200 px when saved
+ADMIN_UPLOAD_ENDPOINTS = {"admin_store_new", "admin_store", "admin_item_add", "admin_item"}
 FACE_MAX_FAILURES = 3                # after this, the cashier must use the one-time code
 PICKUP_VERIFY_MINUTES = 10           # a successful check is valid this long for redemption
 PICKUP_CODE_MINUTES = 10             # one-time code lifetime
@@ -127,7 +137,7 @@ def store_profile(merchant_name):
     return {
         "slug": slug,
         "sections": list(store.get("sections", [])),
-        "price_note": store.get("price_note", "Demo prices for an academic project. Prices may vary in store."),
+        "price_note": store.get("price_note", "Prices are set by the store."),
     }
 
 PAYMENT_METHODS = {
@@ -146,9 +156,10 @@ OUTCOMES = {
     "CODE_SENT": ("Pickup code sent", "secondary", "bi-chat-dots"),
     "CODE_OK": ("Pickup code correct", "success", "bi-patch-check-fill"),
     "CODE_WRONG": ("Wrong pickup code", "danger", "bi-x-octagon-fill"),
+    "REFUNDED": ("Refunded gift", "danger", "bi-arrow-counterclockwise"),
 }
 # Outcomes that count as rejected attempts on the cashier dashboard.
-REJECTED_OUTCOMES = ("ALREADY_USED", "WRONG_STORE", "NOT_FOUND", "FACE_NO_MATCH", "CODE_WRONG")
+REJECTED_OUTCOMES = ("ALREADY_USED", "WRONG_STORE", "NOT_FOUND", "FACE_NO_MATCH", "CODE_WRONG", "REFUNDED")
 
 
 # --------------------------------------------------------------------------
@@ -184,6 +195,30 @@ def _add_missing_columns(cur, table, columns):
     for name, ddl in columns.items():
         if name not in existing:
             cur.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+
+
+def _widen_check(conn, table, old, new):
+    """Rebuild a table whose CHECK constraint needs a new allowed value (SQLite can't ALTER it)."""
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+    if row is None or new in row["sql"] or old not in row["sql"]:
+        return
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute("BEGIN")
+        temp = f"{table}__new"
+        create = row["sql"].replace(old, new, 1)
+        create = re.sub(rf'^CREATE TABLE\s+"?{table}"?', f"CREATE TABLE {temp}", create, count=1)
+        conn.execute(create)
+        conn.execute(f"INSERT INTO {temp} SELECT * FROM {table}")
+        conn.execute(f"DROP TABLE {table}")
+        conn.execute(f"ALTER TABLE {temp} RENAME TO {table}")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
 
 
 def init_db(path=None):
@@ -286,7 +321,12 @@ def init_db(path=None):
     cur.execute("BEGIN IMMEDIATE")
     # Columns added after the first prototype (older gifting.db files get upgraded).
     _add_missing_columns(cur, "merchants", {"image_url": "TEXT", "icon": "TEXT", "accent": "TEXT",
-                                            "cashier_pin_hash": "TEXT", "payout_phone": "TEXT"})
+                                            "cashier_pin_hash": "TEXT", "payout_phone": "TEXT",
+                                            "is_active": "INTEGER NOT NULL DEFAULT 1",
+                                            "location": "TEXT"})
+    cur.execute("""CREATE TABLE IF NOT EXISTS images (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, data BLOB NOT NULL, mime TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL)""")
     cur.executescript("""
         CREATE TABLE IF NOT EXISTS sms_outbox (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -344,6 +384,10 @@ def init_db(path=None):
         "face_score": "REAL",
     })
 
+    _add_missing_columns(cur, "orders", {"refunded_at": "TIMESTAMP", "refund_note": "TEXT"})
+    _widen_check(conn, "orders", "CHECK (status IN ('PENDING', 'PAID', 'FAILED'))",
+                 "CHECK (status IN ('PENDING', 'PAID', 'FAILED', 'REFUNDED'))")
+    _add_missing_columns(cur, "vouchers", {"refunded_at": "TIMESTAMP"})
     voucher_columns = {
         row["name"]: row for row in cur.execute("PRAGMA table_info(vouchers)")
     }
@@ -387,6 +431,9 @@ def init_db(path=None):
         "WHERE price_at_purchase IS NULL"
     )
 
+    _widen_check(conn, "vouchers", "CHECK (status IN ('ACTIVE', 'USED'))",
+                 "CHECK (status IN ('ACTIVE', 'USED', 'REFUNDED'))")
+    cur = conn.cursor()
     cur.execute("CREATE INDEX IF NOT EXISTS idx_vouchers_merchant ON vouchers (merchant_id, status)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_menu_items_merchant ON menu_items (merchant_id, is_active)")
     cur.execute(
@@ -473,11 +520,12 @@ def seed_db(path=None, merchant_name=None):
 def bootstrap(path=None):
     """Prepare the database. Runs at import so it also works under gunicorn."""
     init_db(path)
-    seed_db(path)
-    from seed_kfc import seed_kfc
-    from seed_menus import seed_menus
-    seed_kfc(path)
-    seed_menus(path)
+    if app.config["SEED_DEMO_STORES"]:
+        seed_db(path)
+        from seed_kfc import seed_kfc
+        from seed_menus import seed_menus
+        seed_kfc(path)
+        seed_menus(path)
     apply_store_pins(path, os.environ.get("STORE_PINS", ""))
 
 
@@ -652,7 +700,7 @@ def ugx_filter(value):
 
 def menu_image_path(filename):
     """Resolve an image below static/img without accepting path traversal."""
-    if not filename:
+    if not filename or filename.startswith("db:"):
         return None
     image_root = (BASE_DIR / "static" / "img").resolve()
     image_path = (image_root / filename).resolve()
@@ -663,6 +711,8 @@ def menu_image_path(filename):
 
 def menu_item_image(filename):
     """Return a static URL only when the configured menu image exists."""
+    if filename and filename.startswith("db:"):
+        return url_for("stored_image", image_id=int(filename[3:])) if filename[3:].isdigit() else None
     image_path = menu_image_path(filename)
     if not image_path or not image_path.is_file():
         return None
@@ -706,6 +756,8 @@ FACE_UPLOAD_ENDPOINTS = {"register_face", "face_live_frame"}
 def allow_face_photo_size():
     if request.endpoint in FACE_UPLOAD_ENDPOINTS:
         request.max_content_length = FACE_PHOTO_MAX_BYTES + 64 * 1024
+    elif request.endpoint in ADMIN_UPLOAD_ENDPOINTS:
+        request.max_content_length = ADMIN_PHOTO_MAX_BYTES + 64 * 1024
 
 
 # Called by Pesapal's servers, not a browser form. Safe without a CSRF token because
@@ -797,6 +849,7 @@ def index():
         FROM merchants m
         LEFT JOIN menu ON menu.merchant_id = m.id
         LEFT JOIN packs ON packs.merchant_id = m.id
+        WHERE m.is_active = 1
         ORDER BY m.id
     """).fetchall()
     categories = {}
@@ -850,7 +903,7 @@ def bakery_image(filename):
 @app.route("/store/<int:merchant_id>")
 def store_catalog(merchant_id):
     db = get_db()
-    merchant = db.execute("SELECT * FROM merchants WHERE id = ?", (merchant_id,)).fetchone()
+    merchant = db.execute("SELECT * FROM merchants WHERE id = ? AND is_active = 1", (merchant_id,)).fetchone()
     if not merchant:
         abort(404)
     profile = store_profile(merchant["name"])
@@ -955,14 +1008,14 @@ def gift_catalogue(db):
                mi.category, mi.name, mi.variant, mi.description, mi.price_ugx, mi.tags,
                mi.image_filename
         FROM menu_items mi JOIN merchants m ON m.id=mi.merchant_id
-        WHERE mi.is_active=1 ORDER BY mi.id
+        WHERE mi.is_active=1 AND m.is_active=1 ORDER BY mi.id
     """)]
     for row in db.execute("""
         SELECT p.id, p.merchant_id, m.name AS merchant_name, m.category AS merchant_category,
                m.category AS category, p.title AS name, NULL AS variant, p.description,
                p.monetary_value AS price_ugx, '' AS tags, p.image_url
         FROM products p JOIN merchants m ON m.id=p.merchant_id
-        WHERE NOT EXISTS (SELECT 1 FROM menu_items mi
+        WHERE m.is_active=1 AND NOT EXISTS (SELECT 1 FROM menu_items mi
                           WHERE mi.merchant_id=p.merchant_id AND mi.is_active=1)
         ORDER BY p.id
     """):
@@ -1226,13 +1279,13 @@ def _buy(product_id=None, menu_item_id=None):
                    mi.price_ugx AS monetary_value, m.name AS merchant_name,
                    m.icon, m.accent, mi.id AS menu_item_id
             FROM menu_items mi JOIN merchants m ON m.id=mi.merchant_id
-            WHERE mi.id=? AND mi.is_active=1
+            WHERE mi.id=? AND mi.is_active=1 AND m.is_active=1
         """, (menu_item_id,)).fetchone()
     else:
         product = db.execute("""
             SELECT p.*, m.name AS merchant_name, m.icon AS icon, m.accent AS accent,
                    NULL AS variant, NULL AS menu_item_id
-            FROM products p JOIN merchants m ON p.merchant_id = m.id WHERE p.id = ?
+            FROM products p JOIN merchants m ON p.merchant_id = m.id WHERE p.id = ? AND m.is_active = 1
         """, (product_id,)).fetchone()
     if not product:
         abort(404)
@@ -1406,9 +1459,12 @@ def notify_gift_paid(db, code):
     item = voucher["product_title"]
     value = ugx_filter(voucher["price_at_purchase"] or voucher["monetary_value"])
     sender = voucher["sender_name"]
+    # SMS gateways refuse links to a private address (e.g. http://127.0.0.1 while testing locally).
+    host = (urlparse(link).hostname or "").lower()
+    local = host in ("localhost", "::1") or host.startswith(("127.", "10.", "192.168.")) or host.endswith(".local")
     send_sms(db, voucher["recipient_phone"],
              f"{sender} sent you a gift: {item} from {voucher['merchant_name']}. "
-             f"Show code {code} at the till. Open: {link}",
+             f"Show code {code} at the till." + ("" if local else f" Open: {link}"),
              "GIFT", voucher_code=code)
     if voucher["sender_phone"]:
         send_sms(db, voucher["sender_phone"],
@@ -1861,6 +1917,8 @@ def evaluate_voucher(db, cashier, code, log, client_key=None):
         state, outcome = "not_found", "NOT_FOUND"
     elif voucher["merchant_id"] != cashier["merchant_id"]:
         state, outcome = "wrong_store", "WRONG_STORE"
+    elif voucher["status"] == "REFUNDED":
+        state, outcome = "refunded", "REFUNDED"
     elif voucher["status"] != "ACTIVE":
         state, outcome = "used", "ALREADY_USED"
     else:
@@ -1935,12 +1993,106 @@ def audit_trail(db, merchant_id, limit=15):
     """, (merchant_id, limit)).fetchall()
 
 
+# --------------------------------------------------------------------------
+# Refunds and stored photos (used by the admin panel in admin_panel.py)
+# --------------------------------------------------------------------------
+class RefundError(RuntimeError):
+    pass
+
+
+def refund_order(db, reference, by="admin", remarks="Gift not collected"):
+    """Refund a paid gift that has not been collected.
+
+    The voucher is locked first so it cannot be collected while the refund is in progress.
+    With Pesapal the refund is requested through their API; Pesapal then needs the merchant
+    to approve it in their dashboard. Returns a message for the admin.
+    """
+    order = db.execute("SELECT * FROM orders WHERE reference=?", (reference,)).fetchone()
+    if order is None or order["status"] != "PAID" or not order["voucher_code"]:
+        raise RefundError("Only paid gifts can be refunded.")
+    claimed = db.execute("UPDATE vouchers SET status='REFUNDED', refunded_at=? "
+                         "WHERE voucher_code=? AND status='ACTIVE'", (utc_now(), order["voucher_code"]))
+    db.commit()
+    if claimed.rowcount != 1:
+        raise RefundError("This gift was already collected or refunded, so it can't be refunded.")
+    if order["provider"] == "pesapal":
+        if not order["confirmation_code"]:
+            _unlock_voucher(db, order)
+            raise RefundError("Pesapal gave no confirmation code for this payment. Refund it from the Pesapal dashboard.")
+        try:
+            note = pesapal_client().refund(confirmation_code=order["confirmation_code"], amount=order["amount"],
+                                           username=by, remarks=remarks)
+        except PesapalError as exc:
+            _unlock_voucher(db, order)
+            raise RefundError(f"{exc}. The gift is still active.") from exc
+        note = f"Pesapal: {note}. Approve it in the Pesapal dashboard."
+    else:
+        note = "Demo payment: no real money to return."
+    db.execute("UPDATE orders SET status='REFUNDED', refunded_at=?, refund_note=? WHERE id=?",
+               (utc_now(), note[:300], order["id"]))
+    db.commit()
+    if order["sender_phone"]:
+        send_sms(db, order["sender_phone"],
+                 f"Smart Gifting: your refund of {ugx_filter(order['amount'])} for {order['item_title']} "
+                 "has been started. The gift code no longer works.", "REFUND", voucher_code=order["voucher_code"])
+    return note
+
+
+def _unlock_voucher(db, order):
+    db.execute("UPDATE vouchers SET status='ACTIVE', refunded_at=NULL WHERE voucher_code=? AND status='REFUNDED'",
+               (order["voucher_code"],))
+    db.commit()
+
+
+class ImageError(ValueError):
+    pass
+
+
+def save_uploaded_image(db, upload, max_side=1200):
+    """Resize an uploaded photo to JPEG and keep it in the database (survives redeploys).
+    Returns the image key ("db:<id>") or None when no file was chosen."""
+    if upload is None or not upload.filename:
+        return None
+    raw = upload.read(ADMIN_PHOTO_MAX_BYTES + 1)
+    if len(raw) > ADMIN_PHOTO_MAX_BYTES:
+        raise ImageError("That photo is too large (max 8 MB).")
+    try:
+        import cv2
+        import numpy as np
+    except ImportError as exc:
+        raise ImageError("Photo uploads need opencv-python-headless installed.") from exc
+    image = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        raise ImageError("That file is not a photo we can read. Use JPG or PNG.")
+    h, w = image.shape[:2]
+    scale = min(1.0, max_side / max(h, w))
+    if scale < 1.0:
+        image = cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+    ok, jpeg = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    if not ok:
+        raise ImageError("Could not save that photo.")
+    cur = db.execute("INSERT INTO images (data, mime, created_at) VALUES (?, 'image/jpeg', ?)",
+                     (jpeg.tobytes(), utc_now()))
+    db.commit()
+    return f"db:{cur.lastrowid}"
+
+
+@app.route("/img/<int:image_id>")
+def stored_image(image_id):
+    row = get_db().execute("SELECT data, mime FROM images WHERE id=?", (image_id,)).fetchone()
+    if row is None:
+        abort(404)
+    response = app.response_class(row["data"], mimetype=row["mime"])
+    response.headers["Cache-Control"] = "public, max-age=604800, immutable"
+    return response
+
+
 @app.route("/merchant/verify")
 def merchant_verify():
     db = get_db()
     cashier = authenticated_cashier(db)
     if not cashier:
-        stores = db.execute("SELECT id, name, category FROM merchants ORDER BY name").fetchall()
+        stores = db.execute("SELECT id, name, category FROM merchants WHERE is_active=1 ORDER BY name").fetchall()
         return render_template("verify.html", stores=stores, prefill=request.args.get("prefill", ""))
 
     code = normalise_code(request.args.get("code", "")) if request.args.get("code") else None
@@ -2357,6 +2509,9 @@ def ml_status():
     face = "SFace face check ready" if face_service() is not None else "face check NOT available (OpenCV or model files missing)"
     return f"[ml] recommender mode: {recommender}; fraud check: {fraud}; {face}"
 
+
+import admin_panel  # noqa: E402  (registers the /admin routes)
+admin_panel.register(sys.modules[__name__])
 
 bootstrap()
 warm_up_recommender()

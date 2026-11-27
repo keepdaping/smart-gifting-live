@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% from "_macros.html" import field_error %}
+{% block gift_finder %}{% endblock %}
+{% block title %}Edit gift · Admin{% endblock %}
+{% block content %}
+<div class="container py-4 py-lg-5" style="max-width: 760px;">
+    {% include "admin/_nav.html" %}
+    <p class="mb-1"><a href="{{ url_for('admin_store', store_id=item.merchant_id) }}"><i class="bi bi-arrow-left"></i> {{ item.store_name }}</a></p>
+    <h1 class="h3 mb-3">Edit {{ item.name }}</h1>
+    <form method="POST" enctype="multipart/form-data" class="panel">
+        {{ csrf_field() }}
+        <div class="row g-3">
+            <div class="col-md-6"><label class="form-label" for="name">Gift name</label><input class="form-control {{ 'is-invalid' if errors.name }}" id="name" name="name" value="{{ form.name or '' }}" required maxlength="80">{{ field_error(errors, 'name') }}</div>
+            <div class="col-md-3"><label class="form-label" for="variant">Option</label><input class="form-control" id="variant" name="variant" value="{{ form.variant or '' }}" maxlength="60"></div>
+            <div class="col-md-3"><label class="form-label" for="price">Price (UGX)</label><input class="form-control {{ 'is-invalid' if errors.price_ugx }}" id="price" name="price_ugx" value="{{ form.price_ugx or '' }}" inputmode="numeric" required>{{ field_error(errors, 'price_ugx') }}</div>
+            <div class="col-md-6"><label class="form-label" for="category">Menu section</label><input class="form-control {{ 'is-invalid' if errors.category }}" id="category" name="category" value="{{ form.category or '' }}" required maxlength="40">{{ field_error(errors, 'category') }}</div>
+            <div class="col-md-6"><label class="form-label" for="photo">New photo <span class="small text-muted">(optional)</span></label><input class="form-control" type="file" id="photo" name="photo" accept="image/*"></div>
+            <div class="col-12"><label class="form-label" for="description">Description</label><input class="form-control" id="description" name="description" value="{{ form.description or '' }}" maxlength="300"></div>
+            <div class="col-12"><label class="form-label" for="tags">Words that help the AI finder</label><input class="form-control" id="tags" name="tags" value="{{ form.tags or '' }}" maxlength="200"></div>
+            {% if image %}<div class="col-12"><img src="{{ image }}" alt="" style="max-width:220px;border-radius:12px"></div>{% endif %}
+            <div class="col-12 form-check ms-2"><input class="form-check-input" type="checkbox" id="is_active" name="is_active" value="1" {{ 'checked' if form.is_active }}>
+                <label class="form-check-label" for="is_active">On sale (untick to hide it; gifts already bought still work)</label></div>
+        </div>
+        <button class="btn btn-primary mt-3">Save gift</button>
+    </form>
+</div>
+{% endblock %}

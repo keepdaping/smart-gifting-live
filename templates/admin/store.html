@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% from "_macros.html" import field_error %}
+{% block gift_finder %}{% endblock %}
+{% block title %}{{ store.name if store else 'Add a store' }} · Admin{% endblock %}
+{% block content %}
+<div class="container py-4 py-lg-5" style="max-width: 980px;">
+    {% include "admin/_nav.html" %}
+    <h1 class="h3 mb-3">{{ store.name if store else 'Add a store' }}</h1>
+    {% if store %}<p class="mb-4"><a href="{{ url_for('store_catalog', merchant_id=store.id) }}" target="_blank">View on the site <i class="bi bi-box-arrow-up-right"></i></a></p>{% endif %}
+
+    <form method="POST" enctype="multipart/form-data" class="panel mb-4">
+        {{ csrf_field() }}
+        <div class="row g-3">
+            <div class="col-md-6"><label class="form-label" for="name">Store name</label>
+                <input class="form-control {{ 'is-invalid' if errors.name }}" id="name" name="name" value="{{ form.name or '' }}" required maxlength="80">{{ field_error(errors, 'name') }}</div>
+            <div class="col-md-6"><label class="form-label" for="category">Category</label>
+                <input class="form-control {{ 'is-invalid' if errors.category }}" id="category" name="category" list="cats" value="{{ form.category or '' }}" required maxlength="40" placeholder="e.g. Bakery">
+                <datalist id="cats">{% for c in categories %}<option value="{{ c }}">{% endfor %}<option value="Coffee"><option value="Bakery"><option value="Flowers"><option value="Supermarket"></datalist>{{ field_error(errors, 'category') }}</div>
+            <div class="col-12"><label class="form-label" for="description">Short description</label>
+                <input class="form-control" id="description" name="description" value="{{ form.description or '' }}" maxlength="300" placeholder="What makes this store a good gift"></div>
+            <div class="col-md-6"><label class="form-label" for="location">Location</label>
+                <input class="form-control" id="location" name="location" value="{{ form.location or '' }}" maxlength="120" placeholder="e.g. Main Street, Jinja"></div>
+            <div class="col-md-6"><label class="form-label" for="payout_phone">Mobile Money number for payouts</label>
+                <input class="form-control {{ 'is-invalid' if errors.payout_phone }}" id="payout_phone" name="payout_phone" value="{{ (form.payout_phone|phone) if form.payout_phone else '' }}" placeholder="0770 123 456">{{ field_error(errors, 'payout_phone') }}</div>
+            <div class="col-md-6"><label class="form-label" for="photo">Store photo {% if store and store.image_url %}<span class="small text-muted">(leave empty to keep the current one)</span>{% endif %}</label>
+                <input class="form-control" type="file" id="photo" name="photo" accept="image/*"></div>
+            <div class="col-md-6"><label class="form-label" for="pin">{{ 'New cashier PIN' if store and store.cashier_pin_hash else 'Cashier PIN' }}</label>
+                <input class="form-control {{ 'is-invalid' if errors.pin }}" id="pin" name="pin" inputmode="numeric" autocomplete="new-password" maxlength="12" placeholder="6 to 12 digits{{ ', leave empty to keep it' if store and store.cashier_pin_hash }}">{{ field_error(errors, 'pin') }}
+                <div class="form-text">Give it to the store owner in person. Only a scrambled copy is saved.</div></div>
+            <div class="col-12 form-check ms-2">
+                <input class="form-check-input" type="checkbox" id="is_active" name="is_active" value="1" {{ 'checked' if (not store and not form) or form.is_active }}>
+                <label class="form-check-label" for="is_active">Show this store on the site</label></div>
+        </div>
+        <button class="btn btn-primary mt-3">{{ 'Save store' if store else 'Add store' }}</button>
+    </form>
+
+    {% if store %}
+    <h2 class="h5" id="items">Gifts on sale</h2>
+    {% if items %}
+    <div class="table-responsive panel p-0 mb-3">
+        <table class="table align-middle small mb-0">
+            <thead><tr><th></th><th>Gift</th><th>Section</th><th>Price</th><th></th></tr></thead>
+            <tbody>
+            {% for i in items %}{% set img = item_image(i.image_filename) %}
+            <tr class="{{ '' if i.is_active else 'text-muted' }}">
+                <td style="width:56px">{% if img %}<img src="{{ img }}" alt="" width="48" height="48" style="object-fit:cover;border-radius:8px">{% else %}<i class="bi bi-image text-muted fs-4"></i>{% endif %}</td>
+                <td><strong>{{ i.name }}</strong>{% if i.variant %} · {{ i.variant }}{% endif %}{% if not i.is_active %} <span class="badge text-bg-secondary">hidden</span>{% endif %}</td>
+                <td>{{ i.category }}</td><td>{{ i.price_ugx|ugx }}</td>
+                <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin_item', item_id=i.id) }}">Edit</a></td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}<p class="text-muted">No gifts yet. Add the first one below.</p>{% endif %}
+
+    <form method="POST" action="{{ url_for('admin_item_add', store_id=store.id) }}" enctype="multipart/form-data" class="panel mb-4" id="addItem">
+        {{ csrf_field() }}
+        <h3 class="h6 mb-3">Add a gift</h3>
+        <div class="row g-3">
+            <div class="col-md-5"><label class="form-label" for="i_name">Gift name</label><input class="form-control" id="i_name" name="name" required maxlength="80" placeholder="e.g. Chocolate cake"></div>
+            <div class="col-md-3"><label class="form-label" for="i_variant">Option <span class="text-muted small">(optional)</span></label><input class="form-control" id="i_variant" name="variant" maxlength="60" placeholder="e.g. 1 kg"></div>
+            <div class="col-md-4"><label class="form-label" for="i_price">Price (UGX)</label><input class="form-control" id="i_price" name="price_ugx" inputmode="numeric" required placeholder="45000"></div>
+            <div class="col-md-4"><label class="form-label" for="i_cat">Menu section</label><input class="form-control" id="i_cat" name="category" required maxlength="40" placeholder="e.g. Cakes"></div>
+            <div class="col-md-8"><label class="form-label" for="i_desc">Description</label><input class="form-control" id="i_desc" name="description" maxlength="300"></div>
+            <div class="col-md-8"><label class="form-label" for="i_tags">Words that help the AI finder <span class="text-muted small">(optional)</span></label><input class="form-control" id="i_tags" name="tags" maxlength="200" placeholder="birthday, sweet, celebration"></div>
+            <div class="col-md-4"><label class="form-label" for="i_photo">Photo</label><input class="form-control" type="file" id="i_photo" name="photo" accept="image/*"></div>
+        </div>
+        <button class="btn btn-primary mt-3"><i class="bi bi-plus-lg me-1"></i>Add gift</button>
+    </form>
+
+    <h2 class="h5" id="payouts">Money owed to the store</h2>
+    <div class="panel mb-4">
+        <p class="mb-2">Collected gifts: {{ sales.collected_n }} ({{ sales.collected_value|ugx }}). After the {{ '%g'|format(sales.commission_percent) }}% fee the store has earned <strong>{{ sales.earned|ugx }}</strong>; you have paid {{ sales.paid_out|ugx }}.</p>
+        <p class="h5 mb-3">Still owed: <span class="text-success">{{ sales.balance|ugx }}</span>
+            {% if store.payout_phone %}<span class="small text-muted">· pay to {{ store.payout_phone|phone }}</span>{% endif %}</p>
+        <form method="POST" action="{{ url_for('admin_payout', store_id=store.id) }}" class="row g-2 align-items-end">
+            {{ csrf_field() }}
+            <div class="col-sm-3"><label class="form-label small" for="p_amount">Amount paid (UGX)</label><input class="form-control" id="p_amount" name="amount" inputmode="numeric" required></div>
+            <div class="col-sm-4"><label class="form-label small" for="p_ref">Mobile Money transaction ID</label><input class="form-control" id="p_ref" name="reference" maxlength="60"></div>
+            <div class="col-sm-3"><label class="form-label small" for="p_note">Note</label><input class="form-control" id="p_note" name="note" maxlength="200"></div>
+            <div class="col-sm-2"><button class="btn btn-outline-primary w-100">Record payout</button></div>
+        </form>
+        {% if sales.payouts %}
+        <ul class="list-unstyled small mt-3 mb-0">{% for p in sales.payouts %}<li>{{ p.paid_at|eat("%d %b %Y") }}: {{ p.amount|ugx }}{% if p.reference %} (ref {{ p.reference }}){% endif %}</li>{% endfor %}</ul>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
